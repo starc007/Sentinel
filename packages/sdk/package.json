@@ -1,6 +1,6 @@
 {
   "name": "ows-sentinel-sdk",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "FICO scores for AI agent wallets — reputation-gated policies for OWS",
   "type": "module",
   "main": "dist/index.js",
