@@ -1,0 +1,17 @@
+{
+  "name": "ows-sentinel-sdk",
+  "version": "0.1.0",
+  "description": "SDK for OWS Sentinel — reputation-gated agent wallet policies",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "bin": {
+    "ows-sentinel": "dist/cli.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "typescript": "^5.0.0"
+  }
+}
