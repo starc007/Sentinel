@@ -1,0 +1,8 @@
+name = "sentinel-server"
+main = "src/index.ts"
+compatibility_date = "2025-04-01"
+
+[[kv_namespaces]]
+binding = "KV"
+id = "placeholder-create-with-wrangler"
+preview_id = "placeholder-create-with-wrangler"
