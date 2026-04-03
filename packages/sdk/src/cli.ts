@@ -174,7 +174,7 @@ async function init() {
 
   const authMessage = `sentinel:${walletAddress}`;
   const sigResult = JSON.parse(run(
-    `node -e "const{signMessage}=require('@open-wallet-standard/core');console.log(JSON.stringify(signMessage('${walletName}','evm','${authMessage}')))"  `
+    `NODE_PATH="${policiesDir}/node_modules" node -e "const{signMessage}=require('@open-wallet-standard/core');console.log(JSON.stringify(signMessage('${walletName}','evm','${authMessage}')))"  `
   )) as { signature: string };
   const walletSig = "0x" + sigResult.signature;
 
