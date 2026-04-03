@@ -55,9 +55,8 @@ The `init` command does everything automatically:
 3. Signs an auth message with the wallet (wallet signature auth, no shared secrets)
 4. Registers the policy with OWS
 5. Creates an API key with the policy attached
-6. Prints the API key and usage code
-
-The user saves the API key — it's shown once and never again.
+6. Prints the API key (shown once, user must save it)
+7. Prompts user to link Telegram via deep link (`https://t.me/ows_sentinelBot?start=0xAddress`)
 
 ## Integration
 
