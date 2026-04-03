@@ -46,8 +46,10 @@ Then install and init Sentinel:
 
 ```bash
 npm install ows-sentinel-sdk
-npx ows-sentinel-sdk init
+npx ows-sentinel-sdk init --wallet my-agent
 ```
+
+The `--wallet` flag makes it fully non-interactive (no prompts). Without it, the CLI will prompt for a wallet name.
 
 The `init` command does everything automatically:
 1. Creates an OWS wallet (or uses existing)
@@ -56,7 +58,7 @@ The `init` command does everything automatically:
 4. Registers the policy with OWS
 5. Creates an API key with the policy attached
 6. Prints the API key (shown once, user must save it)
-7. Prompts user to link Telegram via deep link (`https://t.me/ows_sentinelBot?start=0xAddress`)
+7. Links Telegram — shows a deep link, or skips if already linked
 
 ## Integration
 
