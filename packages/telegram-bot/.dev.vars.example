@@ -1,0 +1,4 @@
+TELEGRAM_BOT_TOKEN=your-telegram-bot-token
+SENTINEL_SERVER_URL=http://localhost:8787
+SENTINEL_KEY=your-internal-api-key
+TELEGRAM_CHAT_ID=your-telegram-chat-id
