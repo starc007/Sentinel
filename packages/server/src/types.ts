@@ -13,6 +13,7 @@ export type ReputationScore = {
   tier: "new" | "established" | "trusted" | "verified";
   spend_limit: number;
   today_spent: number;
+  approved_to: boolean;
   breakdown: {
     tx_count: number;
     active_days: number;
@@ -34,6 +35,7 @@ export type AuditEvent = {
 export type PendingTx = {
   id: string;
   wallet_id: string;
+  to: string;
   value: string;
   chain_id: string;
   raw_hex: string;
@@ -41,10 +43,7 @@ export type PendingTx = {
   tier: string;
   score: number;
   status: "pending" | "approved" | "rejected";
-  token?: string;
   created_at: string;
-  telegram_chat_id?: string;
-  telegram_message_id?: number;
 };
 
 export const TIER_LIMITS: Record<string, number> = {

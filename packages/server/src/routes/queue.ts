@@ -1,6 +1,5 @@
 import { Hono } from "hono";
 import type { Bindings, PendingTx } from "../types";
-import { createApprovalToken } from "../lib/hmac";
 import { isValidAddress } from "../lib/validate";
 
 const queue = new Hono<{ Bindings: Bindings }>();
@@ -8,6 +7,7 @@ const queue = new Hono<{ Bindings: Bindings }>();
 queue.post("/queue", async (c) => {
   const body = await c.req.json<{
     wallet_id: string;
+    to: string;
     value: string;
     chain_id: string;
     raw_hex: string;
@@ -23,6 +23,7 @@ queue.post("/queue", async (c) => {
   const pending: PendingTx = {
     id,
     wallet_id: body.wallet_id,
+    to: body.to,
     value: body.value,
     chain_id: body.chain_id,
     raw_hex: body.raw_hex,
@@ -52,10 +53,7 @@ queue.get("/status/:id", async (c) => {
   const id = c.req.param("id");
   const pending = await c.env.KV.get<PendingTx>(`pending:${id}`, "json");
   if (!pending) return c.json({ error: "not_found" }, 404);
-  return c.json({
-    status: pending.status,
-    token: pending.status === "approved" ? pending.token : undefined,
-  });
+  return c.json({ status: pending.status });
 });
 
 queue.post("/approve/:id", async (c) => {
@@ -64,12 +62,19 @@ queue.post("/approve/:id", async (c) => {
   if (!pending) return c.json({ error: "not_found" }, 404);
   if (pending.status !== "pending") return c.json({ error: "already_resolved", status: pending.status });
 
-  const token = await createApprovalToken(id, c.env.SENTINEL_SECRET, 600);
   pending.status = "approved";
-  pending.token = token;
   await c.env.KV.put(`pending:${id}`, JSON.stringify(pending), { expirationTtl: 3600 });
 
-  return c.json({ status: "approved", token });
+  // Store approval so the policy can check it on retry
+  // Key: approved:{wallet}:{to} — TTL 10 minutes
+  const approvalKey = `approved:${pending.wallet_id.toLowerCase()}:${pending.to.toLowerCase()}`;
+  await c.env.KV.put(approvalKey, JSON.stringify({
+    value: pending.value,
+    chain_id: pending.chain_id,
+    approved_at: new Date().toISOString(),
+  }), { expirationTtl: 600 });
+
+  return c.json({ status: "approved" });
 });
 
 queue.post("/reject/:id", async (c) => {

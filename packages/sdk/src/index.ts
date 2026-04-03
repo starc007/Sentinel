@@ -1,11 +1,12 @@
 export type SignWithApprovalOpts = {
   inboxUrl: string;
+  sentinelKey: string;
   pollInterval?: number;
   maxWaitMs?: number;
 };
 
 export async function signWithApproval<T>(
-  signFn: (opts?: { metadata?: Record<string, string> }) => Promise<T>,
+  signFn: () => Promise<T>,
   opts: SignWithApprovalOpts
 ): Promise<T> {
   try {
@@ -13,6 +14,7 @@ export async function signWithApproval<T>(
   } catch (e: any) {
     const msg = e?.message ?? "";
 
+    // Extract queue ID from denial reason
     const match = msg.match(/queued:([a-f0-9-]+)/);
     if (!match) throw e;
 
@@ -21,23 +23,23 @@ export async function signWithApproval<T>(
     const maxWait = opts.maxWaitMs ?? 600_000;
     const deadline = Date.now() + maxWait;
 
+    // Poll until human approves or rejects
     while (Date.now() < deadline) {
       await sleep(pollInterval);
 
-      const res = await fetch(`${opts.inboxUrl}/status/${queueId}`);
-      const data = (await res.json()) as {
-        status: string;
-        token?: string;
-      };
+      const res = await fetch(`${opts.inboxUrl}/status/${queueId}`, {
+        headers: { "X-Sentinel-Key": opts.sentinelKey },
+      });
+      const data = (await res.json()) as { status: string };
 
       if (data.status === "rejected") {
         throw new Error("Transaction rejected by human");
       }
 
-      if (data.status === "approved" && data.token) {
-        return await signFn({
-          metadata: { inbox_approval_token: data.token },
-        });
+      if (data.status === "approved") {
+        // Approval is stored server-side. Just retry sign() —
+        // the policy will check the server and see the approval.
+        return await signFn();
       }
     }
 

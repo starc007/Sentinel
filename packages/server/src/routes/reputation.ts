@@ -35,12 +35,21 @@ reputation.get("/reputation/:wallet", async (c) => {
 
   const tier = getTier(score);
 
+  // Check if there's a pending approval for a specific `to` address
+  const to = c.req.query("to")?.toLowerCase();
+  let approved_to = false;
+  if (to) {
+    const approval = await c.env.KV.get(`approved:${wallet}:${to}`);
+    approved_to = !!approval;
+  }
+
   const result: ReputationScore = {
     wallet,
     score,
     tier,
     spend_limit: getTierLimit(tier),
     today_spent: todaySpent,
+    approved_to,
     breakdown: {
       tx_count: history.txCount,
       active_days: history.activeDays,
@@ -50,7 +59,10 @@ reputation.get("/reputation/:wallet", async (c) => {
     computed_at: new Date().toISOString(),
   };
 
-  await c.env.KV.put(`reputation:${wallet}`, JSON.stringify(result), { expirationTtl: 60 });
+  // Only cache if no `to` query (approval checks must be fresh)
+  if (!to) {
+    await c.env.KV.put(`reputation:${wallet}`, JSON.stringify(result), { expirationTtl: 60 });
+  }
 
   return c.json(result);
 });
