@@ -13,6 +13,13 @@ publicRoutes.post("/register", async (c) => {
   return c.json({ ok: true, wallet: body.wallet.toLowerCase() });
 });
 
+// Check if wallet has a linked Telegram chat
+publicRoutes.get("/registered/:wallet", async (c) => {
+  const wallet = c.req.param("wallet").toLowerCase();
+  const chatId = await c.env.KV.get(`chat:${wallet}`);
+  return c.json({ registered: !!chatId });
+});
+
 // Authed: policy calls this to queue a tx for approval
 queue.post("/queue", async (c) => {
   const body = await c.req.json<{

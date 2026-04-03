@@ -236,16 +236,27 @@ async function init() {
     process.exit(1);
   }
 
-  // 7. Telegram linking
-  const botDeepLink = `https://t.me/${BOT_USERNAME}?start=${walletAddress}`;
+  // 7. Telegram linking — check if already registered
+  let telegramLinked = false;
+  try {
+    const res = await fetch(`${SENTINEL_SERVER_URL}/registered/${walletAddress}`);
+    const data = (await res.json()) as { registered: boolean };
+    telegramLinked = data.registered;
+  } catch {}
 
-  log("  [7/7] Link Telegram for approval notifications\n");
-  log("  Click this link to connect your wallet to Telegram:\n");
-  log(`  ${botDeepLink}\n`);
-  log(`  (Or open Telegram → @${BOT_USERNAME} → send /start ${walletAddress})\n`);
+  if (telegramLinked) {
+    log("  [7/7] Telegram already linked!\n");
+  } else {
+    const botDeepLink = `https://t.me/${BOT_USERNAME}?start=${walletAddress}`;
 
-  if (process.stdin.isTTY) {
-    await prompt("  Press Enter after you've linked...");
+    log("  [7/7] Link Telegram for approval notifications\n");
+    log("  Click this link to connect your wallet to Telegram:\n");
+    log(`  ${botDeepLink}\n`);
+    log(`  (Or open Telegram → @${BOT_USERNAME} → send /start ${walletAddress})\n`);
+
+    if (process.stdin.isTTY) {
+      await prompt("  Press Enter after you've linked...");
+    }
   }
 
   log("  ----------------------------------------");
