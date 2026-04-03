@@ -12,13 +12,12 @@ const app = new Hono<{ Bindings: Bindings }>();
 
 app.get("/health", (c) => c.json({ status: "ok", service: "sentinel-bot" }));
 
-// Handle Telegram webhook updates directly (no grammy middleware)
 app.post("/webhook", async (c) => {
   const update = await c.req.json() as {
     callback_query?: {
       id: string;
       data?: string;
-      message?: { message_id: number; chat: { id: number } };
+      message?: { message_id: number; chat: { id: number }; text?: string };
     };
     message?: {
       text?: string;
@@ -28,7 +27,6 @@ app.post("/webhook", async (c) => {
 
   const bot = new Bot(c.env.TELEGRAM_BOT_TOKEN);
 
-  // Handle /start command
   if (update.message?.text === "/start") {
     await bot.api.sendMessage(
       update.message.chat.id,
@@ -37,13 +35,15 @@ app.post("/webhook", async (c) => {
     return c.json({ ok: true });
   }
 
-  // Handle button callbacks
   if (update.callback_query?.data) {
     const data = update.callback_query.data;
     const callbackId = update.callback_query.id;
     const chatId = update.callback_query.message?.chat.id;
     const messageId = update.callback_query.message?.message_id;
+    const originalText = update.callback_query.message?.text ?? "";
 
+    // Rebuild the HTML from plain text (Telegram sends plain text in callback)
+    // We'll just append the status at the end
     const approveMatch = data.match(/^approve:(.+)$/);
     const rejectMatch = data.match(/^reject:(.+)$/);
 
@@ -53,40 +53,41 @@ app.post("/webhook", async (c) => {
         const res = await c.env.SENTINEL_SERVER.fetch(`https://sentinel-server/approve/${id}`, {
           method: "POST",
         });
-        const text = await res.text();
-        const result = JSON.parse(text) as { status: string; error?: string };
+        const result = (await res.json()) as { status: string; error?: string };
 
         if (result.status === "approved") {
           try { await bot.api.answerCallbackQuery(callbackId, { text: "Approved!" }); } catch {}
           if (chatId && messageId) {
-            try { await bot.api.editMessageText(chatId, messageId, "✅ Transaction APPROVED"); } catch {}
+            const updated = originalText.replace(/Status:.*$/, "Status: ✅ Approved");
+            try { await bot.api.editMessageText(chatId, messageId, updated); } catch {}
           }
         } else {
           try { await bot.api.answerCallbackQuery(callbackId, { text: result.error ?? "Already resolved" }); } catch {}
         }
       } catch (e: any) {
-        console.error(`Approve ${id} failed:`, e?.message ?? e);
         try { await bot.api.answerCallbackQuery(callbackId, { text: "Error approving" }); } catch {}
-        if (chatId && messageId) {
-          try { await bot.api.editMessageText(chatId, messageId, "⚠️ Error approving — try again"); } catch {}
-        }
       }
     }
 
     if (rejectMatch) {
       const id = rejectMatch[1];
-      const res = await c.env.SENTINEL_SERVER.fetch(`https://sentinel-server/reject/${id}`, {
-        method: "POST",
-      });
-      const result = (await res.json()) as { status: string; error?: string };
+      try {
+        const res = await c.env.SENTINEL_SERVER.fetch(`https://sentinel-server/reject/${id}`, {
+          method: "POST",
+        });
+        const result = (await res.json()) as { status: string; error?: string };
 
-      if (result.status === "rejected") {
-        try { await bot.api.answerCallbackQuery(callbackId, { text: "Rejected" }); } catch {}
-        if (chatId && messageId) {
-          try { await bot.api.editMessageText(chatId, messageId, "❌ Transaction REJECTED"); } catch {}
+        if (result.status === "rejected") {
+          try { await bot.api.answerCallbackQuery(callbackId, { text: "Rejected" }); } catch {}
+          if (chatId && messageId) {
+            const updated = originalText.replace(/Status:.*$/, "Status: ❌ Rejected");
+            try { await bot.api.editMessageText(chatId, messageId, updated); } catch {}
+          }
+        } else {
+          try { await bot.api.answerCallbackQuery(callbackId, { text: result.error ?? "Already resolved" }); } catch {}
         }
-      } else {
-        try { await bot.api.answerCallbackQuery(callbackId, { text: result.error ?? "Already resolved" }); } catch {}
+      } catch (e: any) {
+        try { await bot.api.answerCallbackQuery(callbackId, { text: "Error rejecting" }); } catch {}
       }
     }
   }
@@ -94,7 +95,6 @@ app.post("/webhook", async (c) => {
   return c.json({ ok: true });
 });
 
-// Called by sentinel server to send approval request
 app.post("/notify", async (c) => {
   const data = await c.req.json() as ApprovalRequestData & { id: string; wallet_id: string; chain_id: string };
   try {

@@ -11,9 +11,7 @@ export type ApprovalRequestData = {
 export function formatApprovalRequest(data: ApprovalRequestData): string {
   const tierDisplay = data.tier ? data.tier.charAt(0).toUpperCase() + data.tier.slice(1) : "Unknown";
   const chain = data.chainId?.includes("8453") ? "Base" : (data.chainId ?? "Unknown");
-  const toShort = data.to ? `${data.to.slice(0, 6)}...${data.to.slice(-4)}` : "unknown";
 
-  // Determine denial type from reason
   let reasonDisplay: string;
   if (data.reason?.includes("spend_limit")) {
     reasonDisplay = "Spend limit exceeded for this tier";
@@ -26,14 +24,14 @@ export function formatApprovalRequest(data: ApprovalRequestData): string {
   return [
     `🚨 <b>Transaction Blocked — Approval Needed</b>`,
     ``,
-    `<b>Agent</b>    ${data.walletId.slice(0, 10)}...`,
-    `<b>To</b>       ${toShort}`,
+    `<b>From</b>     <code>${data.walletId}</code>`,
+    `<b>To</b>       <code>${data.to}</code>`,
     `<b>Amount</b>   $${data.value} on ${chain}`,
     `<b>Tier</b>     ${tierDisplay}`,
     `<b>Score</b>    ${data.score}/100`,
     ``,
     `<b>Reason:</b> ${reasonDisplay}`,
     ``,
-    `Approve to allow this transaction through.`,
+    `<b>Status:</b> ⏳ Pending`,
   ].join("\n");
 }
