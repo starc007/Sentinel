@@ -1,15 +1,5 @@
 {
   "name": "@sentinel/policies",
   "private": true,
-  "scripts": {
-    "typecheck": "tsc --noEmit"
-  },
-  "dependencies": {
-    "ethers": "^6.16.0",
-    "tsx": "^4.0.0"
-  },
-  "devDependencies": {
-    "@types/node": "^22.0.0",
-    "typescript": "^5.0.0"
-  }
+  "description": "OWS policy executable source — installed to ~/.ows/policies/ via CLI"
 }
