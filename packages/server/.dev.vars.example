@@ -1,0 +1,5 @@
+SENTINEL_SECRET=your-hmac-secret-here
+ALLIUM_API_KEY=your-allium-api-key
+SENTINEL_KEY=your-internal-api-key
+TELEGRAM_BOT_URL=http://localhost:8788
+X402_RECEIVE_ADDRESS=0xYourWalletAddress
