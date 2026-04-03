@@ -3,7 +3,7 @@
 import { readFileSync, existsSync } from "fs";
 import { join } from "path";
 import { homedir } from "os";
-import { Transaction } from "ethers";
+import { Transaction, AbiCoder } from "ethers";
 
 // Load .env from ~/.ows/policies/
 function loadEnv() {
@@ -27,24 +27,110 @@ const TIER_LIMITS: Record<string, number> = {
 };
 
 const HIGH_VALUE_THRESHOLD = 1000;
-const ETH_PRICE_USD = 3000;
 
-function weiToUsd(wei: bigint): number {
-  return Number(wei) / 1e18 * ETH_PRICE_USD;
+// ERC-20 transfer(address,uint256) selector
+const TRANSFER_SELECTOR = "a9059cbb";
+
+// Known stablecoins on Base (address → decimals)
+// These are always $1 per token
+const STABLECOINS: Record<string, number> = {
+  // Base Mainnet
+  "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913": 6, // USDC
+  "0xfde4c96c8593536e31f229ea8f37b2ada2699bb2": 6, // USDT
+  "0x50c5725949a6f0c72e6c4a641f24049a917db0cb": 18, // DAI
+  // Base Sepolia (testnet)
+  "0x036cbd53842c5426634e7929541ec2318f3dcf7e": 6, // USDC (sepolia)
+};
+
+// Fetch live ETH price from CoinGecko (free, no auth)
+async function fetchEthPrice(): Promise<number> {
+  try {
+    const res = await fetch(
+      "https://api.coingecko.com/api/v3/simple/price?ids=ethereum&vs_currencies=usd",
+      { signal: AbortSignal.timeout(2000) }
+    );
+    const data = (await res.json()) as { ethereum: { usd: number } };
+    return data.ethereum.usd;
+  } catch {
+    return 3000; // fallback
+  }
 }
 
-// Parse raw tx hex to extract to and value
-// OWS passes raw_hex but leaves to/value as null
-function parseTx(rawHex: string): { to: string; value: bigint } {
+// Parse raw tx to extract: real recipient, USD value, and whether it's a token transfer
+function parseTx(rawHex: string): {
+  to: string;        // real recipient (contract address for ERC-20, or direct to)
+  realTo: string;     // actual recipient of funds (decoded from transfer() for ERC-20)
+  value: bigint;      // native ETH value in wei
+  isErc20: boolean;
+  tokenContract: string;
+  tokenAmount: bigint;
+  tokenDecimals: number | null;
+} {
   try {
     const tx = Transaction.from("0x" + rawHex);
+    const to = (tx.to ?? "").toLowerCase();
+    const data = tx.data ?? "0x";
+
+    // Check if this is an ERC-20 transfer(address,uint256)
+    if (data.length >= 138 && data.slice(2, 10) === TRANSFER_SELECTOR) {
+      const decoded = AbiCoder.defaultAbiCoder().decode(
+        ["address", "uint256"],
+        "0x" + data.slice(10)
+      );
+      const recipient = (decoded[0] as string).toLowerCase();
+      const amount = decoded[1] as bigint;
+      const decimals = STABLECOINS[to] ?? null;
+
+      return {
+        to,
+        realTo: recipient,
+        value: tx.value,
+        isErc20: true,
+        tokenContract: to,
+        tokenAmount: amount,
+        tokenDecimals: decimals,
+      };
+    }
+
     return {
-      to: (tx.to ?? "").toLowerCase(),
+      to,
+      realTo: to,
       value: tx.value,
+      isErc20: false,
+      tokenContract: "",
+      tokenAmount: 0n,
+      tokenDecimals: null,
     };
   } catch {
-    return { to: "", value: 0n };
+    return {
+      to: "", realTo: "", value: 0n,
+      isErc20: false, tokenContract: "", tokenAmount: 0n, tokenDecimals: null,
+    };
   }
+}
+
+// Calculate USD value of a transaction
+async function txToUsd(parsed: ReturnType<typeof parseTx>): Promise<number> {
+  let usd = 0;
+
+  // Native ETH value
+  if (parsed.value > 0n) {
+    const ethPrice = await fetchEthPrice();
+    usd += Number(parsed.value) / 1e18 * ethPrice;
+  }
+
+  // ERC-20 token value
+  if (parsed.isErc20 && parsed.tokenAmount > 0n) {
+    if (parsed.tokenDecimals !== null) {
+      // Known stablecoin — $1 per token
+      usd += Number(parsed.tokenAmount) / 10 ** parsed.tokenDecimals;
+    }
+    // Unknown token — we can't price it, treat as $0
+    // This means unknown tokens always pass the spend limit
+    // In production, use a price oracle for all tokens
+  }
+
+  return usd;
 }
 
 async function main() {
@@ -66,11 +152,10 @@ async function main() {
   const sentinelUrl = process.env.SENTINEL_URL!;
   const sentinelKey = process.env.SENTINEL_KEY!;
 
-  // Parse the raw transaction to get to/value (OWS doesn't extract these)
+  // Parse the raw transaction
   const parsed = parseTx(ctx.transaction.raw_hex);
-  const to = ctx.transaction.to?.toLowerCase() || parsed.to;
-  const value = parsed.value;
-  const txValueUsd = weiToUsd(value);
+  const to = parsed.realTo; // use the actual fund recipient
+  const txValueUsd = await txToUsd(parsed);
 
   // 1. Fetch reputation score
   let rep: {
@@ -96,7 +181,8 @@ async function main() {
   const tierLimit = TIER_LIMITS[rep.tier] ?? TIER_LIMITS.new;
   const todaySpend = rep.today_spent ?? 0;
 
-  process.stderr.write(`SENTINEL: to=${to} value=${value} usd=$${txValueUsd.toFixed(2)} tier=${rep.tier} limit=$${tierLimit} spent=$${todaySpend}\n`);
+  const txType = parsed.isErc20 ? `ERC20(${parsed.tokenContract.slice(0, 10)}...)` : "ETH";
+  process.stderr.write(`SENTINEL: ${txType} to=${to.slice(0, 10)}... usd=$${txValueUsd.toFixed(2)} tier=${rep.tier} limit=$${tierLimit} spent=$${todaySpend}\n`);
 
   // 2. If this tx was previously approved via Telegram, allow it
   if (rep.approved_to) {
