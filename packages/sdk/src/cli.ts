@@ -192,13 +192,33 @@ async function init() {
     const tokenMatch = keyResult.match(/ows_key_[a-zA-Z0-9_-]+/);
     const token = tokenMatch?.[0] ?? "(see output above)";
 
-    log("  [6/6] API key created\n");
+    log("  [6/7] API key created\n");
     log("  ----------------------------------------");
     log(`  API Key: ${token}`);
     log("  Save this — it won't be shown again.");
     log("  ----------------------------------------\n");
 
-    log("  Setup complete! Use in your agent:\n");
+    // 7. Telegram linking
+    log("  [7/7] Link Telegram for approval notifications\n");
+    log("  To receive transaction approval requests on Telegram:");
+    log(`  1. Open Telegram and search for the Sentinel bot`);
+    log(`  2. Send this message to the bot:\n`);
+    log(`     /start ${walletAddress}\n`);
+
+    await prompt("  Press Enter after you've sent the message...");
+
+    // Verify registration
+    try {
+      await fetch(`${SENTINEL_SERVER_URL}/status/test`);
+      log("\n  Telegram linked!\n");
+    } catch {
+      log("\n  (Could not verify — make sure you sent /start to the bot)\n");
+    }
+
+    log("  ----------------------------------------");
+    log("  Setup complete!");
+    log("  ----------------------------------------\n");
+    log("  Use in your agent:\n");
     log("  ```typescript");
     log('  import { signWithApproval } from "ows-sentinel-sdk"');
     log('  import { signTransaction } from "@open-wallet-standard/core"');
@@ -210,7 +230,7 @@ async function init() {
     log("  ```\n");
     log("  Reputation tiers:");
     log("    New ($5/day) -> Established ($50/day) -> Trusted ($500/day) -> Verified ($5k/day)\n");
-    log("  High-value txs (>$1k) need Telegram approval.\n");
+    log("  Transactions over the limit need your approval on Telegram.\n");
   } catch (e: any) {
     log(`  Failed to create API key: ${e.message}`);
     process.exit(1);

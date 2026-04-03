@@ -5,6 +5,14 @@ import { isValidAddress } from "../lib/validate";
 const queue = new Hono<{ Bindings: Bindings }>();
 const publicRoutes = new Hono<{ Bindings: Bindings }>();
 
+// Register wallet → Telegram chat ID mapping
+publicRoutes.post("/register", async (c) => {
+  const body = await c.req.json<{ wallet: string; chat_id: string }>();
+  if (!body.wallet || !body.chat_id) return c.json({ error: "wallet and chat_id required" }, 400);
+  await c.env.KV.put(`chat:${body.wallet.toLowerCase()}`, body.chat_id);
+  return c.json({ ok: true, wallet: body.wallet.toLowerCase() });
+});
+
 // Authed: policy calls this to queue a tx for approval
 queue.post("/queue", async (c) => {
   const body = await c.req.json<{
@@ -38,13 +46,18 @@ queue.post("/queue", async (c) => {
 
   await c.env.KV.put(`pending:${id}`, JSON.stringify(pending), { expirationTtl: 3600 });
 
+  // Look up Telegram chat ID for this wallet and notify
   if (c.env.TELEGRAM_BOT) {
     c.executionCtx.waitUntil(
-      c.env.TELEGRAM_BOT.fetch("https://sentinel-telegram-bot/notify", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(pending),
-      }).catch((e) => console.error("Telegram notify failed:", e))
+      (async () => {
+        const chatId = await c.env.KV.get(`chat:${body.wallet_id.toLowerCase()}`);
+        if (!chatId) return;
+        await c.env.TELEGRAM_BOT.fetch("https://sentinel-telegram-bot/notify", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ ...pending, chat_id: chatId }),
+        });
+      })().catch((e) => console.error("Telegram notify failed:", e))
     );
   }
 
