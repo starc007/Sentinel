@@ -56,6 +56,14 @@ publicRoutes.get("/status/:id", async (c) => {
   const id = c.req.param("id");
   const pending = await c.env.KV.get<PendingTx>(`pending:${id}`, "json");
   if (!pending) return c.json({ error: "not_found" }, 404);
+
+  // If KV shows pending, double-check the approval key (KV eventual consistency workaround)
+  if (pending.status === "pending" && pending.wallet_id && pending.to) {
+    const approvalKey = `approved:${pending.wallet_id.toLowerCase()}:${pending.to.toLowerCase()}`;
+    const approval = await c.env.KV.get(approvalKey);
+    if (approval) return c.json({ status: "approved" });
+  }
+
   return c.json({ status: pending.status });
 });
 
