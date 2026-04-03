@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { paymentMiddlewareFromConfig } from "@x402/hono";
 import type { Bindings } from "./types";
 import { reputation } from "./routes/reputation";
 import { audit } from "./routes/audit";
@@ -23,7 +24,21 @@ internal.route("/", audit);
 internal.route("/", queue);
 app.route("/", internal);
 
-// x402 payment gate on /scan — wrap in try/catch in case x402 isn't configured
+// x402 payment gate on /scan
+app.use("/scan/*", async (c, next) => {
+  const mw = paymentMiddlewareFromConfig({
+    "GET /scan/:address": {
+      accepts: {
+        scheme: "exact",
+        payTo: c.env.X402_RECEIVE_ADDRESS,
+        price: "$0.01",
+        network: "eip155:84532",
+      },
+      description: "Sentinel reputation query",
+    },
+  });
+  return mw(c, next);
+});
 app.route("/", scan);
 
 export default app;
