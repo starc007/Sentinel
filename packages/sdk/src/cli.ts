@@ -124,7 +124,7 @@ async function init() {
 
   // Install ethers in the policies directory (needed for tx parsing)
   log("  [3/6] Installing policy dependencies...\n");
-  execSync(`cd "${policiesDir}" && npm init -y --silent 2>/dev/null; npm install ethers --silent 2>/dev/null`, {
+  execSync(`cd "${policiesDir}" && npm init -y --silent 2>/dev/null; npm install ethers @open-wallet-standard/core --silent 2>/dev/null`, {
     stdio: ["pipe", "pipe", "pipe"],
   });
 

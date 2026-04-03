@@ -69,19 +69,23 @@ export async function sendApprovalRequest(
   data: {
     id: string;
     wallet_id: string;
+    to: string;
     tier: string;
     value: string;
     chain_id: string;
     score: number;
+    reason: string;
   }
 ) {
   const bot = new Bot(env.TELEGRAM_BOT_TOKEN);
   const message = formatApprovalRequest({
     walletId: data.wallet_id,
+    to: data.to,
     tier: data.tier,
     value: data.value,
     chainId: data.chain_id,
     score: data.score,
+    reason: data.reason,
   });
 
   const keyboard = new InlineKeyboard()

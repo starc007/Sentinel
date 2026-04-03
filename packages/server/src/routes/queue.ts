@@ -16,7 +16,7 @@ queue.post("/queue", async (c) => {
     score: number;
   }>();
 
-  if (!isValidAddress(body.wallet_id)) return c.json({ error: "invalid_address" }, 400);
+  if (body.to && !isValidAddress(body.to)) return c.json({ error: "invalid_to_address" }, 400);
 
   const id = crypto.randomUUID();
 

@@ -1,8 +1,6 @@
 import { Hono } from "hono";
 import { webhookCallback } from "grammy";
 import { createBot, sendApprovalRequest, type BotEnv } from "./bot";
-import { formatSpendLimitAlert, type SpendLimitAlertData } from "./messages";
-import { Bot } from "grammy";
 
 type Bindings = BotEnv;
 
@@ -24,14 +22,6 @@ app.post("/notify", async (c) => {
   } catch (e: any) {
     return c.json({ ok: false, error: e?.message ?? String(e) }, 500);
   }
-});
-
-app.post("/alert/spend-limit", async (c) => {
-  const data = await c.req.json<SpendLimitAlertData>();
-  const bot = new Bot(c.env.TELEGRAM_BOT_TOKEN);
-  const message = formatSpendLimitAlert(data);
-  await bot.api.sendMessage(c.env.TELEGRAM_CHAT_ID, message, { parse_mode: "HTML" });
-  return c.json({ ok: true });
 });
 
 export default app;

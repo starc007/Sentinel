@@ -1,45 +1,39 @@
-export type SpendLimitAlertData = {
-  walletId: string;
-  tier: string;
-  tierLimit: number;
-  todaySpent: number;
-  attemptedValue: number;
-  score: number;
-};
-
-export function formatSpendLimitAlert(data: SpendLimitAlertData): string {
-  const tierDisplay = data.tier.charAt(0).toUpperCase() + data.tier.slice(1);
-  return [
-    `⚠️ <b>Spend Limit Reached</b>`,
-    ``,
-    `<b>Agent</b>      ${data.walletId}`,
-    `<b>Tier</b>       ${tierDisplay} ($${data.tierLimit}/day)`,
-    `<b>Spent</b>      $${data.todaySpent.toFixed(2)} today`,
-    `<b>Attempted</b>  $${data.attemptedValue.toFixed(2)} more → <b>DENIED</b>`,
-    ``,
-    `Score: ${data.score}/100`,
-  ].join("\n");
-}
-
 export type ApprovalRequestData = {
   walletId: string;
   tier: string;
   value: string;
+  to: string;
   chainId: string;
   score: number;
+  reason: string;
 };
 
 export function formatApprovalRequest(data: ApprovalRequestData): string {
-  const tierDisplay = data.tier.charAt(0).toUpperCase() + data.tier.slice(1);
-  const chain = data.chainId.includes("8453") ? "Base" : data.chainId;
+  const tierDisplay = data.tier ? data.tier.charAt(0).toUpperCase() + data.tier.slice(1) : "Unknown";
+  const chain = data.chainId?.includes("8453") ? "Base" : (data.chainId ?? "Unknown");
+  const toShort = data.to ? `${data.to.slice(0, 6)}...${data.to.slice(-4)}` : "unknown";
+
+  // Determine denial type from reason
+  let reasonDisplay: string;
+  if (data.reason?.includes("spend_limit")) {
+    reasonDisplay = "Spend limit exceeded for this tier";
+  } else if (data.reason?.includes("high_value")) {
+    reasonDisplay = "High-value tx requires approval";
+  } else {
+    reasonDisplay = data.reason ?? "Policy denied";
+  }
+
   return [
-    `🚨 <b>High-Value Transaction — Approval Needed</b>`,
+    `🚨 <b>Transaction Blocked — Approval Needed</b>`,
     ``,
-    `<b>Agent</b>      ${data.walletId}`,
-    `<b>Tier</b>       ${tierDisplay}`,
-    `<b>Amount</b>     $${data.value} on ${chain}`,
-    `<b>Score</b>      ${data.score}/100`,
+    `<b>Agent</b>    ${data.walletId.slice(0, 10)}...`,
+    `<b>To</b>       ${toShort}`,
+    `<b>Amount</b>   $${data.value} on ${chain}`,
+    `<b>Tier</b>     ${tierDisplay}`,
+    `<b>Score</b>    ${data.score}/100`,
     ``,
-    `This exceeds auto-approval threshold for this tier.`,
+    `<b>Reason:</b> ${reasonDisplay}`,
+    ``,
+    `Approve to allow this transaction through.`,
   ].join("\n");
 }

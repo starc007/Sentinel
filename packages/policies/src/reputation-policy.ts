@@ -4,6 +4,7 @@ import { readFileSync, existsSync } from "fs";
 import { join } from "path";
 import { homedir } from "os";
 import { Transaction, AbiCoder } from "ethers";
+import { getWallet } from "@open-wallet-standard/core";
 
 // Load .env from ~/.ows/policies/
 function loadEnv() {
@@ -152,6 +153,20 @@ async function main() {
   const sentinelUrl = process.env.SENTINEL_URL!;
   const sentinelKey = process.env.SENTINEL_KEY!;
 
+  // Resolve wallet UUID → EVM address
+  let walletAddress = ctx.wallet_id;
+  try {
+    const wallet = getWallet(ctx.wallet_id);
+    const evmAccount = wallet.accounts.find(
+      (a: { chainId: string; address: string }) => a.chainId.startsWith("eip155:")
+    );
+    if (evmAccount) {
+      walletAddress = evmAccount.address.toLowerCase();
+    }
+  } catch {
+    // wallet not found locally — use wallet_id as-is
+  }
+
   // Parse the raw transaction
   const parsed = parseTx(ctx.transaction.raw_hex);
   const to = parsed.realTo; // use the actual fund recipient
@@ -167,7 +182,7 @@ async function main() {
   };
 
   try {
-    const url = `${sentinelUrl}/reputation/${ctx.wallet_id}${to ? `?to=${to}` : ""}`;
+    const url = `${sentinelUrl}/reputation/${walletAddress}${to ? `?to=${to}` : ""}`;
     const res = await fetch(url, {
       headers: { "X-Sentinel-Key": sentinelKey },
       signal: AbortSignal.timeout(2000),
@@ -182,7 +197,7 @@ async function main() {
   const todaySpend = rep.today_spent ?? 0;
 
   const txType = parsed.isErc20 ? `ERC20(${parsed.tokenContract.slice(0, 10)}...)` : "ETH";
-  process.stderr.write(`SENTINEL: ${txType} to=${to.slice(0, 10)}... usd=$${txValueUsd.toFixed(2)} tier=${rep.tier} limit=$${tierLimit} spent=$${todaySpend}\n`);
+  process.stderr.write(`SENTINEL: wallet=${walletAddress.slice(0, 10)}... ${txType} to=${to.slice(0, 10)}... usd=$${txValueUsd.toFixed(2)} tier=${rep.tier} limit=$${tierLimit} spent=$${todaySpend}\n`);
 
   // 2. If this tx was previously approved via Telegram, allow it
   if (rep.approved_to) {
@@ -191,16 +206,17 @@ async function main() {
     return;
   }
 
-  // 3. Enforce daily limit
+  // 3. Check if tx should be denied
+  let denyReason: string | null = null;
+
   if (todaySpend + txValueUsd > tierLimit) {
-    const reason = `spend_limit:$${txValueUsd.toFixed(2)}+$${todaySpend.toFixed(2)}>$${tierLimit}(${rep.tier})`;
-    reportAudit(sentinelUrl, sentinelKey, ctx.wallet_id, ctx.chain_id, txValueUsd, "deny", reason);
-    output({ allow: false, reason });
-    return;
+    denyReason = `spend_limit:$${txValueUsd.toFixed(2)}+$${todaySpend.toFixed(2)}>$${tierLimit}(${rep.tier})`;
+  } else if (txValueUsd > HIGH_VALUE_THRESHOLD && rep.tier !== "verified") {
+    denyReason = `high_value:$${txValueUsd.toFixed(2)}(${rep.tier})`;
   }
 
-  // 4. High-value tx → queue for human approval
-  if (txValueUsd > HIGH_VALUE_THRESHOLD && rep.tier !== "verified") {
+  // 4. If denied → queue for human approval via Telegram
+  if (denyReason) {
     try {
       const res = await fetch(`${sentinelUrl}/queue`, {
         method: "POST",
@@ -209,22 +225,23 @@ async function main() {
           "X-Sentinel-Key": sentinelKey,
         },
         body: JSON.stringify({
-          wallet_id: ctx.wallet_id,
+          wallet_id: walletAddress,
           to,
           value: txValueUsd.toFixed(2),
           chain_id: ctx.chain_id,
           raw_hex: ctx.transaction.raw_hex,
-          reason: "high_value",
+          reason: denyReason,
           tier: rep.tier,
           score: rep.score,
         }),
         signal: AbortSignal.timeout(2000),
       });
       const { id } = (await res.json()) as { id: string };
-      reportAudit(sentinelUrl, sentinelKey, ctx.wallet_id, ctx.chain_id, txValueUsd, "deny", `high_value:queued:${id}`);
-      output({ allow: false, reason: `high_value:queued:${id}` });
+      reportAudit(sentinelUrl, sentinelKey, ctx.wallet_id, ctx.chain_id, txValueUsd, "deny", `queued:${id}:${denyReason}`);
+      output({ allow: false, reason: `queued:${id}:${denyReason}` });
     } catch (e) {
-      output({ allow: false, reason: `queue_error:${e}` });
+      reportAudit(sentinelUrl, sentinelKey, ctx.wallet_id, ctx.chain_id, txValueUsd, "deny", denyReason);
+      output({ allow: false, reason: denyReason });
     }
     return;
   }

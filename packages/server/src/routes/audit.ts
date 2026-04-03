@@ -1,6 +1,5 @@
 import { Hono } from "hono";
 import type { Bindings, AuditEvent } from "../types";
-import { isValidAddress } from "../lib/validate";
 
 const audit = new Hono<{ Bindings: Bindings }>();
 
@@ -13,7 +12,7 @@ audit.post("/audit", async (c) => {
     chain_id: string;
   }>();
 
-  if (!isValidAddress(body.wallet_id)) return c.json({ error: "invalid_address" }, 400);
+  if (!body.wallet_id) return c.json({ error: "wallet_id required" }, 400);
 
   const event: AuditEvent = {
     timestamp: new Date().toISOString(),

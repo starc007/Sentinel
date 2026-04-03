@@ -11,8 +11,13 @@ reputation.get("/reputation/:wallet", async (c) => {
   const wallet = c.req.param("wallet").toLowerCase();
   if (!isValidAddress(wallet)) return c.json({ error: "invalid_address" }, 400);
 
-  const cached = await c.env.KV.get<ReputationScore>(`reputation:${wallet}`, "json");
-  if (cached) return c.json(cached);
+  const to = c.req.query("to")?.toLowerCase();
+
+  // Only use cache when no `to` query — approval checks must be fresh
+  if (!to) {
+    const cached = await c.env.KV.get<ReputationScore>(`reputation:${wallet}`, "json");
+    if (cached) return c.json(cached);
+  }
 
   const history = await fetchWalletHistory(wallet, c.env.ALLIUM_API_KEY);
   const goplus = await checkAddresses(history.counterparties.slice(0, 20));
@@ -36,7 +41,6 @@ reputation.get("/reputation/:wallet", async (c) => {
   const tier = getTier(score);
 
   // Check if there's a pending approval for a specific `to` address
-  const to = c.req.query("to")?.toLowerCase();
   let approved_to = false;
   if (to) {
     const approval = await c.env.KV.get(`approved:${wallet}:${to}`);
