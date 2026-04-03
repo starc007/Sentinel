@@ -18,8 +18,12 @@ app.post("/webhook", async (c) => {
 
 app.post("/notify", async (c) => {
   const data = await c.req.json();
-  await sendApprovalRequest(c.env, data);
-  return c.json({ ok: true });
+  try {
+    await sendApprovalRequest(c.env, data);
+    return c.json({ ok: true });
+  } catch (e: any) {
+    return c.json({ ok: false, error: e?.message ?? String(e) }, 500);
+  }
 });
 
 app.post("/alert/spend-limit", async (c) => {

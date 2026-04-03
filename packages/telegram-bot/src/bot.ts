@@ -1,9 +1,9 @@
-import { Bot, InlineKeyboard, webhookCallback } from "grammy";
+import { Bot, InlineKeyboard } from "grammy";
 import { formatApprovalRequest } from "./messages";
 
 export type BotEnv = {
   TELEGRAM_BOT_TOKEN: string;
-  SENTINEL_SERVER_URL: string;
+  SENTINEL_SERVER: Fetcher;
   SENTINEL_KEY: string;
   TELEGRAM_CHAT_ID: string;
 };
@@ -17,39 +17,47 @@ export function createBot(env: BotEnv) {
 
   bot.callbackQuery(/^approve:(.+)$/, async (ctx) => {
     const id = ctx.match![1];
-    const res = await fetch(`${env.SENTINEL_SERVER_URL}/approve/${id}`, {
-      method: "POST",
-      headers: { "X-Sentinel-Key": env.SENTINEL_KEY },
-    });
-    const data = (await res.json()) as { status: string };
+    try {
+      const res = await env.SENTINEL_SERVER.fetch(`https://sentinel-server/approve/${id}`, {
+        method: "POST",
+        headers: { "X-Sentinel-Key": env.SENTINEL_KEY },
+      });
+      const data = (await res.json()) as { status: string };
 
-    if (data.status === "approved") {
-      await ctx.answerCallbackQuery({ text: "Approved!" });
-      await ctx.editMessageText(
-        ctx.callbackQuery.message?.text + "\n\n✅ <b>APPROVED</b>",
-        { parse_mode: "HTML" }
-      );
-    } else {
-      await ctx.answerCallbackQuery({ text: "Already resolved" });
+      if (data.status === "approved") {
+        await ctx.answerCallbackQuery({ text: "Approved!" });
+        await ctx.editMessageText(
+          ctx.callbackQuery.message?.text + "\n\n✅ <b>APPROVED</b>",
+          { parse_mode: "HTML" }
+        );
+      } else {
+        await ctx.answerCallbackQuery({ text: "Already resolved" });
+      }
+    } catch (e: any) {
+      await ctx.answerCallbackQuery({ text: "Error: " + (e?.message ?? "unknown") });
     }
   });
 
   bot.callbackQuery(/^reject:(.+)$/, async (ctx) => {
     const id = ctx.match![1];
-    const res = await fetch(`${env.SENTINEL_SERVER_URL}/reject/${id}`, {
-      method: "POST",
-      headers: { "X-Sentinel-Key": env.SENTINEL_KEY },
-    });
-    const data = (await res.json()) as { status: string };
+    try {
+      const res = await env.SENTINEL_SERVER.fetch(`https://sentinel-server/reject/${id}`, {
+        method: "POST",
+        headers: { "X-Sentinel-Key": env.SENTINEL_KEY },
+      });
+      const data = (await res.json()) as { status: string };
 
-    if (data.status === "rejected") {
-      await ctx.answerCallbackQuery({ text: "Rejected" });
-      await ctx.editMessageText(
-        ctx.callbackQuery.message?.text + "\n\n❌ <b>REJECTED</b>",
-        { parse_mode: "HTML" }
-      );
-    } else {
-      await ctx.answerCallbackQuery({ text: "Already resolved" });
+      if (data.status === "rejected") {
+        await ctx.answerCallbackQuery({ text: "Rejected" });
+        await ctx.editMessageText(
+          ctx.callbackQuery.message?.text + "\n\n❌ <b>REJECTED</b>",
+          { parse_mode: "HTML" }
+        );
+      } else {
+        await ctx.answerCallbackQuery({ text: "Already resolved" });
+      }
+    } catch (e: any) {
+      await ctx.answerCallbackQuery({ text: "Error: " + (e?.message ?? "unknown") });
     }
   });
 

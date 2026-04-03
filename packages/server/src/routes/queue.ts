@@ -32,12 +32,14 @@ queue.post("/queue", async (c) => {
 
   await c.env.KV.put(`pending:${id}`, JSON.stringify(pending), { expirationTtl: 3600 });
 
-  if (c.env.TELEGRAM_BOT_URL) {
-    fetch(`${c.env.TELEGRAM_BOT_URL}/notify`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(pending),
-    }).catch(() => {});
+  if (c.env.TELEGRAM_BOT) {
+    c.executionCtx.waitUntil(
+      c.env.TELEGRAM_BOT.fetch("https://sentinel-telegram-bot/notify", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(pending),
+      }).catch((e) => console.error("Telegram notify failed:", e))
+    );
   }
 
   return c.json({ id, status: "pending" });

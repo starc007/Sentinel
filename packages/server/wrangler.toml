@@ -5,3 +5,7 @@ compatibility_date = "2025-04-01"
 [[kv_namespaces]]
 binding = "KV"
 id = "76fe9c101e334f9bb937cb0770a083fd"
+
+[[services]]
+binding = "TELEGRAM_BOT"
+service = "sentinel-telegram-bot"

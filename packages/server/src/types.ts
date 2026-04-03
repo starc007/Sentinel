@@ -1,9 +1,9 @@
 export type Bindings = {
   KV: KVNamespace;
+  TELEGRAM_BOT: Fetcher;
   SENTINEL_SECRET: string;
   ALLIUM_API_KEY: string;
   SENTINEL_KEY: string;
-  TELEGRAM_BOT_URL: string;
   X402_RECEIVE_ADDRESS: string;
 };
 

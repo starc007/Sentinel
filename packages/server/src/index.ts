@@ -10,6 +10,20 @@ const app = new Hono<{ Bindings: Bindings }>();
 
 app.get("/health", (c) => c.json({ status: "ok", service: "sentinel" }));
 
+// Debug: test bot connectivity via service binding
+app.get("/debug/bot", async (c) => {
+  const key = c.req.header("X-Sentinel-Key");
+  if (key !== c.env.SENTINEL_KEY) return c.json({ error: "unauthorized" }, 401);
+
+  try {
+    const res = await c.env.TELEGRAM_BOT.fetch("https://sentinel-telegram-bot/health");
+    const body = await res.text();
+    return c.json({ binding: "TELEGRAM_BOT", status: res.status, body });
+  } catch (e: any) {
+    return c.json({ error: e?.message ?? String(e) });
+  }
+});
+
 // x402 payment gate on /scan (public, before auth middleware)
 app.use("/scan/*", async (c, next) => {
   try {
