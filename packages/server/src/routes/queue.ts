@@ -52,18 +52,17 @@ queue.post("/queue", async (c) => {
 });
 
 // Public: agent SDK polls this (UUID is unguessable)
+// Uses a dedicated status:{id} key for instant reads (no KV consistency lag)
 publicRoutes.get("/status/:id", async (c) => {
   const id = c.req.param("id");
+
+  // Fast path: check lightweight status key first
+  const quickStatus = await c.env.KV.get(`status:${id}`);
+  if (quickStatus) return c.json({ status: quickStatus });
+
+  // Fallback: check the full pending object
   const pending = await c.env.KV.get<PendingTx>(`pending:${id}`, "json");
   if (!pending) return c.json({ error: "not_found" }, 404);
-
-  // If KV shows pending, double-check the approval key (KV eventual consistency workaround)
-  if (pending.status === "pending" && pending.wallet_id && pending.to) {
-    const approvalKey = `approved:${pending.wallet_id.toLowerCase()}:${pending.to.toLowerCase()}`;
-    const approval = await c.env.KV.get(approvalKey);
-    if (approval) return c.json({ status: "approved" });
-  }
-
   return c.json({ status: pending.status });
 });
 
@@ -75,14 +74,17 @@ publicRoutes.post("/approve/:id", async (c) => {
   if (pending.status !== "pending") return c.json({ error: "already_resolved", status: pending.status });
 
   pending.status = "approved";
-  await c.env.KV.put(`pending:${id}`, JSON.stringify(pending), { expirationTtl: 3600 });
 
-  const approvalKey = `approved:${pending.wallet_id.toLowerCase()}:${pending.to.toLowerCase()}`;
-  await c.env.KV.put(approvalKey, JSON.stringify({
-    value: pending.value,
-    chain_id: pending.chain_id,
-    approved_at: new Date().toISOString(),
-  }), { expirationTtl: 600 });
+  // Write all keys in parallel for speed
+  await Promise.all([
+    c.env.KV.put(`status:${id}`, "approved", { expirationTtl: 3600 }),
+    c.env.KV.put(`pending:${id}`, JSON.stringify(pending), { expirationTtl: 3600 }),
+    c.env.KV.put(
+      `approved:${pending.wallet_id.toLowerCase()}:${pending.to.toLowerCase()}`,
+      JSON.stringify({ value: pending.value, chain_id: pending.chain_id, approved_at: new Date().toISOString() }),
+      { expirationTtl: 600 }
+    ),
+  ]);
 
   return c.json({ status: "approved" });
 });
@@ -94,7 +96,11 @@ publicRoutes.post("/reject/:id", async (c) => {
   if (pending.status !== "pending") return c.json({ error: "already_resolved", status: pending.status });
 
   pending.status = "rejected";
-  await c.env.KV.put(`pending:${id}`, JSON.stringify(pending), { expirationTtl: 3600 });
+
+  await Promise.all([
+    c.env.KV.put(`status:${id}`, "rejected", { expirationTtl: 3600 }),
+    c.env.KV.put(`pending:${id}`, JSON.stringify(pending), { expirationTtl: 3600 }),
+  ]);
 
   return c.json({ status: "rejected" });
 });
