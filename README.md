@@ -269,7 +269,7 @@ ows-sentinel/
 ## Development
 
 ```bash
-git clone https://github.com/starc007/ows-sentinel
+git clone https://github.com/starc007/Sentinel
 cd ows-sentinel
 pnpm install
 

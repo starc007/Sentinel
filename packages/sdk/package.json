@@ -28,7 +28,7 @@
   ],
   "repository": {
     "type": "git",
-    "url": "https://github.com/starc007/ows-sentinel"
+    "url": "https://github.com/starc007/Sentinel"
   },
   "license": "MIT",
   "devDependencies": {
