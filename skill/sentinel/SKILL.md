@@ -46,7 +46,7 @@ Then install and init Sentinel:
 
 ```bash
 npm install ows-sentinel-sdk
-npx ows-sentinel init
+npx ows-sentinel-sdk init
 ```
 
 The `init` command does everything automatically:

@@ -22,7 +22,7 @@ A public API lets anyone query any wallet's reputation for $0.01 via x402. No se
 
 ```bash
 npm install ows-sentinel-sdk
-npx ows-sentinel init
+npx ows-sentinel-sdk init
 ```
 
 That's it. The CLI automatically:
@@ -256,7 +256,7 @@ ows-sentinel/
 │   └── sdk/                     # npm: ows-sentinel-sdk
 │       ├── src/
 │       │   ├── index.ts         # signWithApproval()
-│       │   └── cli.ts           # npx ows-sentinel init
+│       │   └── cli.ts           # npx ows-sentinel-sdk init
 │       └── policy/
 │           └── reputation-policy.ts  # bundled for npm
 ├── package.json

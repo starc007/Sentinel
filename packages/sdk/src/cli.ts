@@ -11,8 +11,20 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
 const SENTINEL_SERVER_URL = "https://sentinel-server.saurabh10102.workers.dev";
+const BOT_USERNAME = "ows_sentinelBot";
+
+// Parse --wallet flag from args
+function parseArgs(): { wallet?: string } {
+  const args = process.argv.slice(3);
+  const walletIdx = args.indexOf("--wallet");
+  return {
+    wallet: walletIdx >= 0 ? args[walletIdx + 1] : undefined,
+  };
+}
 
 function prompt(question: string): Promise<string> {
+  // If stdin is not a TTY (piped), return empty immediately
+  if (!process.stdin.isTTY) return Promise.resolve("");
   const rl = createInterface({ input: process.stdin, output: process.stdout });
   return new Promise((resolve) => {
     rl.question(question, (answer: string) => {
@@ -35,6 +47,8 @@ function log(msg: string) {
 }
 
 async function init() {
+  const args = parseArgs();
+
   log("\n  Sentinel Setup\n");
   log("  FICO scores for AI agent wallets.\n");
 
@@ -51,44 +65,52 @@ async function init() {
   try {
     tsxPath = run("which tsx");
   } catch {
-    log("  tsx not found. Installing globally...");
+    log("  Installing tsx...");
     run("npm install -g tsx");
     tsxPath = run("which tsx");
   }
 
-  log("  [1/6] OWS CLI + tsx found\n");
+  log("  [1/7] OWS CLI + tsx found\n");
 
   // 2. Get or create wallet
   const walletList = run("ows wallet list");
   let walletName: string;
 
   if (walletList.includes("No wallets found")) {
-    log("  No wallets found. Creating one...\n");
-    walletName = (await prompt("  Wallet name (press Enter for 'sentinel-agent'): ")) || "sentinel-agent";
-    log("");
+    walletName = args.wallet || (await prompt("  Wallet name (press Enter for 'sentinel-agent'): ")) || "sentinel-agent";
+    log(`  Creating wallet: ${walletName}...\n`);
     const result = run(`ows wallet create --name "${walletName}"`);
     const evmMatch = result.match(/eip155:1.*→\s*(0x[0-9a-fA-F]+)/);
     if (evmMatch) {
-      log(`  [2/6] Wallet created: ${walletName}`);
+      log(`  [2/7] Wallet created: ${walletName}`);
       log(`         EVM address: ${evmMatch[1]}\n`);
     } else {
-      log(`  [2/6] Wallet created: ${walletName}\n`);
+      log(`  [2/7] Wallet created: ${walletName}\n`);
     }
   } else {
     const names = walletList.match(/Name:\s+(\S+)/g)?.map((m) => m.replace("Name:", "").trim()) ?? [];
-    if (names.length === 1) {
+    if (args.wallet && names.includes(args.wallet)) {
+      walletName = args.wallet;
+      log(`  [2/7] Using wallet: ${walletName}\n`);
+    } else if (names.length === 1) {
       walletName = names[0];
-      log(`  [2/6] Using wallet: ${walletName}\n`);
+      log(`  [2/7] Using wallet: ${walletName}\n`);
+    } else if (args.wallet) {
+      // --wallet provided but doesn't exist, create it
+      walletName = args.wallet;
+      log(`  Creating wallet: ${walletName}...\n`);
+      run(`ows wallet create --name "${walletName}"`);
+      log(`  [2/7] Wallet created: ${walletName}\n`);
     } else {
       log("  Available wallets:");
       names.forEach((n) => log(`    - ${n}`));
       log("");
       walletName = await prompt("  Which wallet? ");
       if (!walletName) {
-        log("  Wallet name required.");
+        log("  Wallet name required. Use: npx ows-sentinel-sdk init --wallet <name>");
         process.exit(1);
       }
-      log(`\n  [2/6] Using wallet: ${walletName}\n`);
+      log(`\n  [2/7] Using wallet: ${walletName}\n`);
     }
   }
 
@@ -120,13 +142,27 @@ async function init() {
   ].join("\n"));
   execSync(`chmod +x "${policyShPath}"`);
 
-  log("  [3/6] Installing policy dependencies...\n");
-  execSync(`cd "${policiesDir}" && npm init -y --silent 2>/dev/null; npm install ethers @open-wallet-standard/core --silent 2>/dev/null`, {
-    stdio: ["pipe", "pipe", "pipe"],
-  });
+  log("  [3/7] Installing policy dependencies...\n");
+  try {
+    execSync(`cd "${policiesDir}" && npm init -y --silent 2>/dev/null; npm install ethers @open-wallet-standard/core 2>&1`, {
+      stdio: ["pipe", "pipe", "pipe"],
+      timeout: 60000,
+    });
+  } catch (e: any) {
+    log("  Warning: dependency install had issues. Retrying...");
+    try {
+      execSync(`cd "${policiesDir}" && npm install ethers @open-wallet-standard/core --force 2>&1`, {
+        stdio: ["pipe", "pipe", "pipe"],
+        timeout: 60000,
+      });
+    } catch {
+      log("  Failed to install dependencies. Run manually:");
+      log(`  cd ${policiesDir} && npm install ethers @open-wallet-standard/core`);
+      process.exit(1);
+    }
+  }
 
-  // 4. Sign auth message with wallet — proves ownership, no shared secrets
-  // Resolve wallet EVM address
+  // 4. Sign auth message with wallet
   const walletInfo = run(`ows wallet list`);
   const evmMatch = walletInfo.match(/eip155:1.*→\s*(0x[0-9a-fA-F]+)/);
   const walletAddress = evmMatch ? evmMatch[1].toLowerCase() : "";
@@ -136,14 +172,12 @@ async function init() {
     process.exit(1);
   }
 
-  // Sign "sentinel:{address}" — server verifies by recovering the signer
   const authMessage = `sentinel:${walletAddress}`;
   const sigResult = JSON.parse(run(
     `node -e "const{signMessage}=require('@open-wallet-standard/core');console.log(JSON.stringify(signMessage('${walletName}','evm','${authMessage}')))"  `
   )) as { signature: string };
   const walletSig = "0x" + sigResult.signature;
 
-  // Write .env for the policy
   const envPath = join(policiesDir, ".env");
   writeFileSync(envPath, [
     `SENTINEL_URL=${SENTINEL_SERVER_URL}`,
@@ -152,7 +186,7 @@ async function init() {
     ``,
   ].join("\n"));
 
-  log(`  [4/6] Policy installed + wallet signature created\n`);
+  log(`  [4/7] Policy installed + wallet signature created`);
   log(`         Address: ${walletAddress}\n`);
 
   // 5. Register policy with OWS
@@ -173,10 +207,10 @@ async function init() {
 
   try {
     run(`ows policy create --file "${policyJsonPath}"`);
-    log("  [5/6] Policy registered with OWS\n");
+    log("  [5/7] Policy registered with OWS\n");
   } catch (e: any) {
     if (e.message.includes("already exists")) {
-      log("  [5/6] Policy already registered\n");
+      log("  [5/7] Policy already registered\n");
     } else {
       log(`  Failed to register policy: ${e.message}`);
       process.exit(1);
@@ -184,50 +218,52 @@ async function init() {
   }
 
   // 6. Create API key
+  let token: string;
   try {
     const keyResult = run(
       `ows key create --name "sentinel-${walletName}" --wallet "${walletName}" --policy sentinel-reputation`
     );
-
     const tokenMatch = keyResult.match(/ows_key_[a-zA-Z0-9_-]+/);
-    const token = tokenMatch?.[0] ?? "(see output above)";
+    token = tokenMatch?.[0] ?? "";
 
     log("  [6/7] API key created\n");
     log("  ----------------------------------------");
     log(`  API Key: ${token}`);
     log("  Save this — it won't be shown again.");
     log("  ----------------------------------------\n");
-
-    // 7. Telegram linking
-    const botDeepLink = `https://t.me/ows_sentinelBot?start=${walletAddress}`;
-
-    log("  [7/7] Link Telegram for approval notifications\n");
-    log("  Click this link to connect your wallet to Telegram:\n");
-    log(`  ${botDeepLink}\n`);
-    log("  (Or open Telegram → @ows_sentinelBot → tap Start)\n");
-
-    await prompt("  Press Enter after you've linked...");
-
-    log("  ----------------------------------------");
-    log("  Setup complete!");
-    log("  ----------------------------------------\n");
-    log("  Use in your agent:\n");
-    log("  ```typescript");
-    log('  import { signWithApproval } from "ows-sentinel-sdk"');
-    log('  import { signTransaction } from "@open-wallet-standard/core"');
-    log("");
-    log("  const tx = await signWithApproval(");
-    log(`    () => signTransaction("${walletName}", "eip155:84532", txHex, "${token}"),`);
-    log(`    { inboxUrl: "${SENTINEL_SERVER_URL}" }`);
-    log("  )");
-    log("  ```\n");
-    log("  Reputation tiers:");
-    log("    New ($5/day) -> Established ($50/day) -> Trusted ($500/day) -> Verified ($5k/day)\n");
-    log("  Transactions over the limit need your approval on Telegram.\n");
   } catch (e: any) {
     log(`  Failed to create API key: ${e.message}`);
     process.exit(1);
   }
+
+  // 7. Telegram linking
+  const botDeepLink = `https://t.me/${BOT_USERNAME}?start=${walletAddress}`;
+
+  log("  [7/7] Link Telegram for approval notifications\n");
+  log("  Click this link to connect your wallet to Telegram:\n");
+  log(`  ${botDeepLink}\n`);
+  log(`  (Or open Telegram → @${BOT_USERNAME} → send /start ${walletAddress})\n`);
+
+  if (process.stdin.isTTY) {
+    await prompt("  Press Enter after you've linked...");
+  }
+
+  log("  ----------------------------------------");
+  log("  Setup complete!");
+  log("  ----------------------------------------\n");
+  log("  Use in your agent:\n");
+  log("  ```typescript");
+  log('  import { signWithApproval } from "ows-sentinel-sdk"');
+  log('  import { signTransaction } from "@open-wallet-standard/core"');
+  log("");
+  log("  const tx = await signWithApproval(");
+  log(`    () => signTransaction("${walletName}", "eip155:84532", txHex, "${token}"),`);
+  log(`    { inboxUrl: "${SENTINEL_SERVER_URL}" }`);
+  log("  )");
+  log("  ```\n");
+  log("  Reputation tiers:");
+  log("    New ($5/day) -> Established ($50/day) -> Trusted ($500/day) -> Verified ($5k/day)\n");
+  log("  Transactions over the limit need your approval on Telegram.\n");
 }
 
 async function main() {
@@ -235,7 +271,7 @@ async function main() {
   if (command === "init") {
     await init();
   } else {
-    log("Usage: npx ows-sentinel init");
+    log("Usage: npx ows-sentinel-sdk init [--wallet <name>]");
     log("  Sets up Sentinel reputation policy on your OWS wallet");
   }
 }

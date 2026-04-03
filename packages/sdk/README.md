@@ -8,7 +8,7 @@ Sentinel is a reputation system for [OWS](https://openwallet.sh) agent wallets. 
 
 ```bash
 npm install ows-sentinel-sdk
-npx ows-sentinel init
+npx ows-sentinel-sdk init
 ```
 
 The CLI automatically creates a wallet, installs the policy, registers it with OWS, and gives you an API key. Zero manual config.
