@@ -1,0 +1,12 @@
+{
+  "name": "ows-sentinel",
+  "private": true,
+  "scripts": {
+    "dev:server": "pnpm --filter @sentinel/server dev",
+    "dev:bot": "pnpm --filter @sentinel/telegram-bot dev",
+    "deploy:server": "pnpm --filter @sentinel/server deploy",
+    "deploy:bot": "pnpm --filter @sentinel/telegram-bot deploy",
+    "test": "pnpm -r test",
+    "typecheck": "pnpm -r typecheck"
+  }
+}
