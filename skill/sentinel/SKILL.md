@@ -125,8 +125,9 @@ The CLI installs it automatically. If it fails: `npm install -g tsx`
 Policies only run when signing with an **API key** (`ows_key_...`), not with the wallet passphrase. Make sure you're passing the API key as the 4th argument to `signTransaction`.
 
 ### Telegram notifications not arriving
-1. Make sure you've started the bot on Telegram (`/start`)
-2. Check the bot's health: `curl https://sentinel-telegram-bot.saurabh10102.workers.dev/health`
+1. Link your wallet: open `https://t.me/ows_sentinelBot?start=YOUR_WALLET_ADDRESS`
+2. Or send `/start 0xYourAddress` to @ows_sentinelBot on Telegram
+3. Check the bot's health: `curl https://sentinel-telegram-bot.saurabh10102.workers.dev/health`
 
 ## Links
 

@@ -199,21 +199,14 @@ async function init() {
     log("  ----------------------------------------\n");
 
     // 7. Telegram linking
+    const botDeepLink = `https://t.me/ows_sentinelBot?start=${walletAddress}`;
+
     log("  [7/7] Link Telegram for approval notifications\n");
-    log("  To receive transaction approval requests on Telegram:");
-    log(`  1. Open Telegram and search for the Sentinel bot`);
-    log(`  2. Send this message to the bot:\n`);
-    log(`     /start ${walletAddress}\n`);
+    log("  Click this link to connect your wallet to Telegram:\n");
+    log(`  ${botDeepLink}\n`);
+    log("  (Or open Telegram → @ows_sentinelBot → tap Start)\n");
 
-    await prompt("  Press Enter after you've sent the message...");
-
-    // Verify registration
-    try {
-      await fetch(`${SENTINEL_SERVER_URL}/status/test`);
-      log("\n  Telegram linked!\n");
-    } catch {
-      log("\n  (Could not verify — make sure you sent /start to the bot)\n");
-    }
+    await prompt("  Press Enter after you've linked...");
 
     log("  ----------------------------------------");
     log("  Setup complete!");
