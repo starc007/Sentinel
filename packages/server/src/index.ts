@@ -1,9 +1,10 @@
 import { Hono } from "hono";
 import { paymentMiddlewareFromConfig } from "@x402/hono";
+import { verifyMessage } from "ethers";
 import type { Bindings } from "./types";
 import { reputation } from "./routes/reputation";
 import { audit } from "./routes/audit";
-import { queue } from "./routes/queue";
+import { queue, publicRoutes } from "./routes/queue";
 import { scan } from "./routes/scan";
 
 const app = new Hono<{ Bindings: Bindings }>();
@@ -39,18 +40,35 @@ app.use("/scan/*", async (c, next) => {
 });
 app.route("/", scan);
 
-// Auth middleware for internal routes
-const internal = new Hono<{ Bindings: Bindings }>();
-internal.use("*", async (c, next) => {
-  const key = c.req.header("X-Sentinel-Key");
-  if (key !== c.env.SENTINEL_KEY) {
-    return c.json({ error: "unauthorized" }, 401);
+// Public: agent SDK polls status, Telegram bot calls approve/reject
+app.route("/", publicRoutes);
+
+// Wallet signature auth middleware
+// Policy sends X-Wallet-Sig (signed "sentinel:{address}") and X-Wallet-Address headers
+// Server recovers address from sig and verifies it matches
+const authed = new Hono<{ Bindings: Bindings }>();
+authed.use("*", async (c, next) => {
+  const sig = c.req.header("X-Wallet-Sig");
+  const wallet = c.req.header("X-Wallet-Address")?.toLowerCase();
+
+  if (!sig || !wallet) {
+    return c.json({ error: "missing X-Wallet-Sig or X-Wallet-Address header" }, 401);
   }
+
+  try {
+    const recovered = verifyMessage(`sentinel:${wallet}`, sig).toLowerCase();
+    if (recovered !== wallet) {
+      return c.json({ error: "signature does not match wallet" }, 401);
+    }
+  } catch {
+    return c.json({ error: "invalid signature" }, 401);
+  }
+
   await next();
 });
-internal.route("/", reputation);
-internal.route("/", audit);
-internal.route("/", queue);
-app.route("/", internal);
+authed.route("/", reputation);
+authed.route("/", audit);
+authed.route("/", queue);
+app.route("/", authed);
 
 export default app;

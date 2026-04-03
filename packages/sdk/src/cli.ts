@@ -92,13 +92,12 @@ async function init() {
     }
   }
 
-  // 3. Install policy files
+  // 3. Install policy files + deps
   const policiesDir = join(homedir(), ".ows", "policies");
   if (!existsSync(policiesDir)) {
     mkdirSync(policiesDir, { recursive: true });
   }
 
-  // Copy the .ts policy file
   const policyTsPath = join(policiesDir, "reputation-policy.ts");
   const sourcePaths = [
     join(__dirname, "..", "..", "policies", "src", "reputation-policy.ts"),
@@ -112,7 +111,6 @@ async function init() {
     process.exit(1);
   }
 
-  // Create shell wrapper — OWS executes this, which calls tsx with correct NODE_PATH
   const policyShPath = join(policiesDir, "reputation-policy.sh");
   writeFileSync(policyShPath, [
     `#!/bin/bash`,
@@ -122,41 +120,42 @@ async function init() {
   ].join("\n"));
   execSync(`chmod +x "${policyShPath}"`);
 
-  // Install ethers in the policies directory (needed for tx parsing)
   log("  [3/6] Installing policy dependencies...\n");
   execSync(`cd "${policiesDir}" && npm init -y --silent 2>/dev/null; npm install ethers @open-wallet-standard/core --silent 2>/dev/null`, {
     stdio: ["pipe", "pipe", "pipe"],
   });
 
-  // Generate sentinel key
-  let sentinelKey: string;
-  try {
-    const res = await fetch(`${SENTINEL_SERVER_URL}/register`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ wallet: walletName }),
-    });
-    if (res.ok) {
-      const data = (await res.json()) as { key: string };
-      sentinelKey = data.key;
-    } else {
-      sentinelKey = Array.from(crypto.getRandomValues(new Uint8Array(32)))
-        .map((b) => b.toString(16).padStart(2, "0"))
-        .join("");
-    }
-  } catch {
-    sentinelKey = Array.from(crypto.getRandomValues(new Uint8Array(32)))
-      .map((b) => b.toString(16).padStart(2, "0"))
-      .join("");
+  // 4. Sign auth message with wallet — proves ownership, no shared secrets
+  // Resolve wallet EVM address
+  const walletInfo = run(`ows wallet list`);
+  const evmMatch = walletInfo.match(/eip155:1.*→\s*(0x[0-9a-fA-F]+)/);
+  const walletAddress = evmMatch ? evmMatch[1].toLowerCase() : "";
+
+  if (!walletAddress) {
+    log("  Could not resolve EVM address from wallet.");
+    process.exit(1);
   }
+
+  // Sign "sentinel:{address}" — server verifies by recovering the signer
+  const authMessage = `sentinel:${walletAddress}`;
+  const sigResult = JSON.parse(run(
+    `node -e "const{signMessage}=require('@open-wallet-standard/core');console.log(JSON.stringify(signMessage('${walletName}','evm','${authMessage}')))"  `
+  )) as { signature: string };
+  const walletSig = "0x" + sigResult.signature;
 
   // Write .env for the policy
   const envPath = join(policiesDir, ".env");
-  writeFileSync(envPath, `SENTINEL_URL=${SENTINEL_SERVER_URL}\nSENTINEL_KEY=${sentinelKey}\n`);
+  writeFileSync(envPath, [
+    `SENTINEL_URL=${SENTINEL_SERVER_URL}`,
+    `WALLET_ADDRESS=${walletAddress}`,
+    `WALLET_SIG=${walletSig}`,
+    ``,
+  ].join("\n"));
 
-  log(`  [4/6] Policy installed to ${policiesDir}\n`);
+  log(`  [4/6] Policy installed + wallet signature created\n`);
+  log(`         Address: ${walletAddress}\n`);
 
-  // 4. Register policy with OWS (points to .sh wrapper)
+  // 5. Register policy with OWS
   const policyJson = {
     id: "sentinel-reputation",
     name: "Sentinel Reputation Gate",
@@ -184,7 +183,7 @@ async function init() {
     }
   }
 
-  // 5. Create API key
+  // 6. Create API key
   try {
     const keyResult = run(
       `ows key create --name "sentinel-${walletName}" --wallet "${walletName}" --policy sentinel-reputation`
@@ -206,10 +205,7 @@ async function init() {
     log("");
     log("  const tx = await signWithApproval(");
     log(`    () => signTransaction("${walletName}", "eip155:84532", txHex, "${token}"),`);
-    log("    {");
-    log(`      inboxUrl: "${SENTINEL_SERVER_URL}",`);
-    log(`      sentinelKey: "${sentinelKey}",`);
-    log("    }");
+    log(`    { inboxUrl: "${SENTINEL_SERVER_URL}" }`);
     log("  )");
     log("  ```\n");
     log("  Reputation tiers:");

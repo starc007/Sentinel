@@ -4,7 +4,6 @@ import { formatApprovalRequest } from "./messages";
 export type BotEnv = {
   TELEGRAM_BOT_TOKEN: string;
   SENTINEL_SERVER: Fetcher;
-  SENTINEL_KEY: string;
   TELEGRAM_CHAT_ID: string;
 };
 
@@ -17,48 +16,44 @@ export function createBot(env: BotEnv) {
 
   bot.callbackQuery(/^approve:(.+)$/, async (ctx) => {
     const id = ctx.match![1];
-    try {
-      const res = await env.SENTINEL_SERVER.fetch(`https://sentinel-server/approve/${id}`, {
-        method: "POST",
-        headers: { "X-Sentinel-Key": env.SENTINEL_KEY },
-      });
-      const data = (await res.json()) as { status: string };
 
+    // Critical: approve the tx on the server
+    const res = await env.SENTINEL_SERVER.fetch(`https://sentinel-server/approve/${id}`, {
+      method: "POST",
+    });
+    const data = (await res.json()) as { status: string };
+
+    // Best-effort: update Telegram UI (don't let failures crash the handler)
+    try {
       if (data.status === "approved") {
         await ctx.answerCallbackQuery({ text: "Approved!" });
-        await ctx.editMessageText(
-          ctx.callbackQuery.message?.text + "\n\n✅ <b>APPROVED</b>",
-          { parse_mode: "HTML" }
-        );
+        await ctx.editMessageText("✅ Transaction APPROVED");
       } else {
         await ctx.answerCallbackQuery({ text: "Already resolved" });
       }
-    } catch (e: any) {
-      await ctx.answerCallbackQuery({ text: "Error: " + (e?.message ?? "unknown") });
-    }
+    } catch { /* Telegram UI update failed — tx is still approved */ }
   });
 
   bot.callbackQuery(/^reject:(.+)$/, async (ctx) => {
     const id = ctx.match![1];
-    try {
-      const res = await env.SENTINEL_SERVER.fetch(`https://sentinel-server/reject/${id}`, {
-        method: "POST",
-        headers: { "X-Sentinel-Key": env.SENTINEL_KEY },
-      });
-      const data = (await res.json()) as { status: string };
 
+    const res = await env.SENTINEL_SERVER.fetch(`https://sentinel-server/reject/${id}`, {
+      method: "POST",
+    });
+    const data = (await res.json()) as { status: string };
+
+    try {
       if (data.status === "rejected") {
         await ctx.answerCallbackQuery({ text: "Rejected" });
-        await ctx.editMessageText(
-          ctx.callbackQuery.message?.text + "\n\n❌ <b>REJECTED</b>",
-          { parse_mode: "HTML" }
-        );
+        await ctx.editMessageText("❌ Transaction REJECTED");
       } else {
         await ctx.answerCallbackQuery({ text: "Already resolved" });
       }
-    } catch (e: any) {
-      await ctx.answerCallbackQuery({ text: "Error: " + (e?.message ?? "unknown") });
-    }
+    } catch { /* Telegram UI update failed — tx is still rejected */ }
+  });
+
+  bot.catch((err) => {
+    console.error("Bot error:", err.message);
   });
 
   return bot;

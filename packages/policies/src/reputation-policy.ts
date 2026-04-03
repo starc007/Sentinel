@@ -151,10 +151,10 @@ async function main() {
   };
 
   const sentinelUrl = process.env.SENTINEL_URL!;
-  const sentinelKey = process.env.SENTINEL_KEY!;
+  const walletSig = process.env.WALLET_SIG!;
 
   // Resolve wallet UUID → EVM address
-  let walletAddress = ctx.wallet_id;
+  let walletAddress = process.env.WALLET_ADDRESS || ctx.wallet_id;
   try {
     const wallet = getWallet(ctx.wallet_id);
     const evmAccount = wallet.accounts.find(
@@ -184,7 +184,7 @@ async function main() {
   try {
     const url = `${sentinelUrl}/reputation/${walletAddress}${to ? `?to=${to}` : ""}`;
     const res = await fetch(url, {
-      headers: { "X-Sentinel-Key": sentinelKey },
+      headers: { "X-Wallet-Sig": walletSig, "X-Wallet-Address": walletAddress },
       signal: AbortSignal.timeout(2000),
     });
     rep = (await res.json()) as typeof rep;
@@ -201,7 +201,7 @@ async function main() {
 
   // 2. If this tx was previously approved via Telegram, allow it
   if (rep.approved_to) {
-    reportAudit(sentinelUrl, sentinelKey, ctx.wallet_id, ctx.chain_id, txValueUsd, "allow", "human_approved");
+    reportAudit(sentinelUrl, walletSig, walletAddress, ctx.chain_id, txValueUsd, "allow", "human_approved");
     output({ allow: true });
     return;
   }
@@ -222,7 +222,7 @@ async function main() {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "X-Sentinel-Key": sentinelKey,
+          "X-Wallet-Sig": walletSig, "X-Wallet-Address": walletAddress,
         },
         body: JSON.stringify({
           wallet_id: walletAddress,
@@ -237,17 +237,17 @@ async function main() {
         signal: AbortSignal.timeout(2000),
       });
       const { id } = (await res.json()) as { id: string };
-      reportAudit(sentinelUrl, sentinelKey, ctx.wallet_id, ctx.chain_id, txValueUsd, "deny", `queued:${id}:${denyReason}`);
+      reportAudit(sentinelUrl, walletSig, walletAddress, ctx.chain_id, txValueUsd, "deny", `queued:${id}:${denyReason}`);
       output({ allow: false, reason: `queued:${id}:${denyReason}` });
     } catch (e) {
-      reportAudit(sentinelUrl, sentinelKey, ctx.wallet_id, ctx.chain_id, txValueUsd, "deny", denyReason);
+      reportAudit(sentinelUrl, walletSig, walletAddress, ctx.chain_id, txValueUsd, "deny", denyReason);
       output({ allow: false, reason: denyReason });
     }
     return;
   }
 
   // 5. Allow
-  reportAudit(sentinelUrl, sentinelKey, ctx.wallet_id, ctx.chain_id, txValueUsd, "allow");
+  reportAudit(sentinelUrl, walletSig, walletAddress, ctx.chain_id, txValueUsd, "allow");
   output({ allow: true });
 }
 
@@ -257,7 +257,7 @@ function output(result: { allow: boolean; reason?: string }) {
 
 function reportAudit(
   sentinelUrl: string,
-  sentinelKey: string,
+  walletSig: string,
   walletId: string,
   chainId: string,
   txValueUsd: number,
@@ -268,7 +268,7 @@ function reportAudit(
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      "X-Sentinel-Key": sentinelKey,
+      "X-Wallet-Sig": walletSig, "X-Wallet-Address": walletId,
     },
     body: JSON.stringify({
       wallet_id: walletId,

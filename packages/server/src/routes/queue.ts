@@ -3,7 +3,9 @@ import type { Bindings, PendingTx } from "../types";
 import { isValidAddress } from "../lib/validate";
 
 const queue = new Hono<{ Bindings: Bindings }>();
+const publicRoutes = new Hono<{ Bindings: Bindings }>();
 
+// Authed: policy calls this to queue a tx for approval
 queue.post("/queue", async (c) => {
   const body = await c.req.json<{
     wallet_id: string;
@@ -49,14 +51,16 @@ queue.post("/queue", async (c) => {
   return c.json({ id, status: "pending" });
 });
 
-queue.get("/status/:id", async (c) => {
+// Public: agent SDK polls this (UUID is unguessable)
+publicRoutes.get("/status/:id", async (c) => {
   const id = c.req.param("id");
   const pending = await c.env.KV.get<PendingTx>(`pending:${id}`, "json");
   if (!pending) return c.json({ error: "not_found" }, 404);
   return c.json({ status: pending.status });
 });
 
-queue.post("/approve/:id", async (c) => {
+// Public: Telegram bot calls these via service binding
+publicRoutes.post("/approve/:id", async (c) => {
   const id = c.req.param("id");
   const pending = await c.env.KV.get<PendingTx>(`pending:${id}`, "json");
   if (!pending) return c.json({ error: "not_found" }, 404);
@@ -65,8 +69,6 @@ queue.post("/approve/:id", async (c) => {
   pending.status = "approved";
   await c.env.KV.put(`pending:${id}`, JSON.stringify(pending), { expirationTtl: 3600 });
 
-  // Store approval so the policy can check it on retry
-  // Key: approved:{wallet}:{to} — TTL 10 minutes
   const approvalKey = `approved:${pending.wallet_id.toLowerCase()}:${pending.to.toLowerCase()}`;
   await c.env.KV.put(approvalKey, JSON.stringify({
     value: pending.value,
@@ -77,7 +79,7 @@ queue.post("/approve/:id", async (c) => {
   return c.json({ status: "approved" });
 });
 
-queue.post("/reject/:id", async (c) => {
+publicRoutes.post("/reject/:id", async (c) => {
   const id = c.req.param("id");
   const pending = await c.env.KV.get<PendingTx>(`pending:${id}`, "json");
   if (!pending) return c.json({ error: "not_found" }, 404);
@@ -89,4 +91,4 @@ queue.post("/reject/:id", async (c) => {
   return c.json({ status: "rejected" });
 });
 
-export { queue };
+export { queue, publicRoutes };

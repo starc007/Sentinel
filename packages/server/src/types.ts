@@ -3,7 +3,6 @@ export type Bindings = {
   TELEGRAM_BOT: Fetcher;
   SENTINEL_SECRET: string;
   ALLIUM_API_KEY: string;
-  SENTINEL_KEY: string;
   X402_RECEIVE_ADDRESS: string;
 };
 

@@ -1,6 +1,5 @@
 export type SignWithApprovalOpts = {
   inboxUrl: string;
-  sentinelKey: string;
   pollInterval?: number;
   maxWaitMs?: number;
 };
@@ -27,9 +26,7 @@ export async function signWithApproval<T>(
     while (Date.now() < deadline) {
       await sleep(pollInterval);
 
-      const res = await fetch(`${opts.inboxUrl}/status/${queueId}`, {
-        headers: { "X-Sentinel-Key": opts.sentinelKey },
-      });
+      const res = await fetch(`${opts.inboxUrl}/status/${queueId}`);
       const data = (await res.json()) as { status: string };
 
       if (data.status === "rejected") {
