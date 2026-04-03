@@ -1,5 +1,24 @@
 #!/usr/bin/env tsx
 
+import { readFileSync, existsSync } from "fs";
+import { join } from "path";
+import { homedir } from "os";
+import { Transaction } from "ethers";
+
+// Load .env from ~/.ows/policies/
+function loadEnv() {
+  const envPath = join(homedir(), ".ows", "policies", ".env");
+  if (!existsSync(envPath)) return;
+  const content = readFileSync(envPath, "utf8");
+  for (const line of content.split("\n")) {
+    const match = line.match(/^([^#=]+)=(.*)$/);
+    if (match && !process.env[match[1].trim()]) {
+      process.env[match[1].trim()] = match[2].trim();
+    }
+  }
+}
+loadEnv();
+
 const TIER_LIMITS: Record<string, number> = {
   new: 5,
   established: 50,
@@ -8,6 +27,25 @@ const TIER_LIMITS: Record<string, number> = {
 };
 
 const HIGH_VALUE_THRESHOLD = 1000;
+const ETH_PRICE_USD = 3000;
+
+function weiToUsd(wei: bigint): number {
+  return Number(wei) / 1e18 * ETH_PRICE_USD;
+}
+
+// Parse raw tx hex to extract to and value
+// OWS passes raw_hex but leaves to/value as null
+function parseTx(rawHex: string): { to: string; value: bigint } {
+  try {
+    const tx = Transaction.from("0x" + rawHex);
+    return {
+      to: (tx.to ?? "").toLowerCase(),
+      value: tx.value,
+    };
+  } catch {
+    return { to: "", value: 0n };
+  }
+}
 
 async function main() {
   const chunks: Buffer[] = [];
@@ -16,10 +54,10 @@ async function main() {
     wallet_id: string;
     chain_id: string;
     transaction: {
-      to: string;
-      value: string;
+      to: string | null;
+      value: string | null;
       raw_hex: string;
-      data?: string;
+      data: string | null;
     };
     api_key_id: string;
     timestamp: string;
@@ -27,9 +65,14 @@ async function main() {
 
   const sentinelUrl = process.env.SENTINEL_URL!;
   const sentinelKey = process.env.SENTINEL_KEY!;
-  const to = ctx.transaction.to?.toLowerCase() ?? "";
 
-  // 1. Fetch reputation score (pass `to` so server checks for approvals)
+  // Parse the raw transaction to get to/value (OWS doesn't extract these)
+  const parsed = parseTx(ctx.transaction.raw_hex);
+  const to = ctx.transaction.to?.toLowerCase() || parsed.to;
+  const value = parsed.value;
+  const txValueUsd = weiToUsd(value);
+
+  // 1. Fetch reputation score
   let rep: {
     score: number;
     tier: string;
@@ -50,29 +93,28 @@ async function main() {
     return;
   }
 
-  const txValue = parseFloat(ctx.transaction.value ?? "0");
   const tierLimit = TIER_LIMITS[rep.tier] ?? TIER_LIMITS.new;
   const todaySpend = rep.today_spent ?? 0;
 
+  process.stderr.write(`SENTINEL: to=${to} value=${value} usd=$${txValueUsd.toFixed(2)} tier=${rep.tier} limit=$${tierLimit} spent=$${todaySpend}\n`);
+
   // 2. If this tx was previously approved via Telegram, allow it
   if (rep.approved_to) {
-    reportAudit(sentinelUrl, sentinelKey, ctx, "allow", "human_approved");
+    reportAudit(sentinelUrl, sentinelKey, ctx.wallet_id, ctx.chain_id, txValueUsd, "allow", "human_approved");
     output({ allow: true });
     return;
   }
 
   // 3. Enforce daily limit
-  if (todaySpend + txValue > tierLimit) {
-    reportAudit(sentinelUrl, sentinelKey, ctx, "deny", `spend_limit_exceeded:tier=${rep.tier}:limit=${tierLimit}:spent=${todaySpend}`);
-    output({
-      allow: false,
-      reason: `spend_limit_exceeded:tier=${rep.tier}:limit=${tierLimit}:spent=${todaySpend}`,
-    });
+  if (todaySpend + txValueUsd > tierLimit) {
+    const reason = `spend_limit:$${txValueUsd.toFixed(2)}+$${todaySpend.toFixed(2)}>$${tierLimit}(${rep.tier})`;
+    reportAudit(sentinelUrl, sentinelKey, ctx.wallet_id, ctx.chain_id, txValueUsd, "deny", reason);
+    output({ allow: false, reason });
     return;
   }
 
   // 4. High-value tx → queue for human approval
-  if (txValue > HIGH_VALUE_THRESHOLD && rep.tier !== "verified") {
+  if (txValueUsd > HIGH_VALUE_THRESHOLD && rep.tier !== "verified") {
     try {
       const res = await fetch(`${sentinelUrl}/queue`, {
         method: "POST",
@@ -83,7 +125,7 @@ async function main() {
         body: JSON.stringify({
           wallet_id: ctx.wallet_id,
           to,
-          value: ctx.transaction.value,
+          value: txValueUsd.toFixed(2),
           chain_id: ctx.chain_id,
           raw_hex: ctx.transaction.raw_hex,
           reason: "high_value",
@@ -93,7 +135,7 @@ async function main() {
         signal: AbortSignal.timeout(2000),
       });
       const { id } = (await res.json()) as { id: string };
-      reportAudit(sentinelUrl, sentinelKey, ctx, "deny", `high_value:queued:${id}`);
+      reportAudit(sentinelUrl, sentinelKey, ctx.wallet_id, ctx.chain_id, txValueUsd, "deny", `high_value:queued:${id}`);
       output({ allow: false, reason: `high_value:queued:${id}` });
     } catch (e) {
       output({ allow: false, reason: `queue_error:${e}` });
@@ -102,7 +144,7 @@ async function main() {
   }
 
   // 5. Allow
-  reportAudit(sentinelUrl, sentinelKey, ctx, "allow");
+  reportAudit(sentinelUrl, sentinelKey, ctx.wallet_id, ctx.chain_id, txValueUsd, "allow");
   output({ allow: true });
 }
 
@@ -113,7 +155,9 @@ function output(result: { allow: boolean; reason?: string }) {
 function reportAudit(
   sentinelUrl: string,
   sentinelKey: string,
-  ctx: { wallet_id: string; chain_id: string; transaction: { value: string } },
+  walletId: string,
+  chainId: string,
+  txValueUsd: number,
   action: "allow" | "deny",
   reason?: string
 ) {
@@ -124,11 +168,11 @@ function reportAudit(
       "X-Sentinel-Key": sentinelKey,
     },
     body: JSON.stringify({
-      wallet_id: ctx.wallet_id,
+      wallet_id: walletId,
       action,
       reason,
-      tx_value: ctx.transaction.value,
-      chain_id: ctx.chain_id,
+      tx_value: txValueUsd.toFixed(2),
+      chain_id: chainId,
     }),
   }).catch(() => {});
 }
