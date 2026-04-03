@@ -3,11 +3,13 @@ import type { Bindings, AuditEvent, ReputationScore } from "../types";
 import { computeScore, getTier, getTierLimit } from "../engine/scoring";
 import { fetchWalletHistory } from "../engine/allium";
 import { checkAddresses } from "../engine/goplus";
+import { isValidAddress } from "../lib/validate";
 
 const reputation = new Hono<{ Bindings: Bindings }>();
 
 reputation.get("/reputation/:wallet", async (c) => {
   const wallet = c.req.param("wallet").toLowerCase();
+  if (!isValidAddress(wallet)) return c.json({ error: "invalid_address" }, 400);
 
   const cached = await c.env.KV.get<ReputationScore>(`reputation:${wallet}`, "json");
   if (cached) return c.json(cached);

@@ -3,11 +3,13 @@ import type { Bindings, AuditEvent } from "../types";
 import { computeScore, getTier, getTierLimit } from "../engine/scoring";
 import { fetchWalletHistory } from "../engine/allium";
 import { checkAddresses } from "../engine/goplus";
+import { isValidAddress } from "../lib/validate";
 
 const scan = new Hono<{ Bindings: Bindings }>();
 
 scan.get("/scan/:address", async (c) => {
   const address = c.req.param("address").toLowerCase();
+  if (!isValidAddress(address)) return c.json({ error: "invalid_address" }, 400);
 
   const history = await fetchWalletHistory(address, c.env.ALLIUM_API_KEY);
   const goplus = await checkAddresses(history.counterparties.slice(0, 20));

@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import type { Bindings, PendingTx } from "../types";
 import { createApprovalToken } from "../lib/hmac";
+import { isValidAddress } from "../lib/validate";
 
 const queue = new Hono<{ Bindings: Bindings }>();
 
@@ -14,6 +15,8 @@ queue.post("/queue", async (c) => {
     tier: string;
     score: number;
   }>();
+
+  if (!isValidAddress(body.wallet_id)) return c.json({ error: "invalid_address" }, 400);
 
   const id = crypto.randomUUID();
 
