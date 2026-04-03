@@ -8,5 +8,12 @@
     "deploy:bot": "pnpm --filter @sentinel/telegram-bot run deploy",
     "test": "pnpm -r test",
     "typecheck": "pnpm -r typecheck"
+  },
+  "devDependencies": {
+    "ethers": "^6.16.0",
+    "tsx": "^4.21.0"
+  },
+  "dependencies": {
+    "@open-wallet-standard/core": "^1.2.0"
   }
 }

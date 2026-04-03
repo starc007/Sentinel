@@ -1,17 +1,36 @@
 {
   "name": "ows-sentinel-sdk",
   "version": "0.1.0",
-  "description": "SDK for OWS Sentinel — reputation-gated agent wallet policies",
+  "description": "FICO scores for AI agent wallets — reputation-gated policies for OWS",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "bin": {
     "ows-sentinel": "dist/cli.js"
   },
+  "files": [
+    "dist",
+    "policy"
+  ],
   "scripts": {
     "build": "tsc",
+    "prepublishOnly": "tsc",
     "typecheck": "tsc --noEmit"
   },
+  "keywords": [
+    "ows",
+    "wallet",
+    "reputation",
+    "policy",
+    "agent",
+    "sentinel",
+    "web3"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/starc007/ows-sentinel"
+  },
+  "license": "MIT",
   "devDependencies": {
     "@types/node": "^22.19.15",
     "typescript": "^5.0.0"

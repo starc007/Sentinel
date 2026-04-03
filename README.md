@@ -12,9 +12,37 @@ Every OWS agent wallet starts with the same flat trust level regardless of histo
 
 ## The Solution
 
-Sentinel computes a reputation score for each agent wallet based on its on-chain history and policy compliance. That score maps to a spend tier with enforced daily limits. High-value transactions require human approval via Telegram. Everything is enforced cryptographically by the OWS policy engine — not advisory, not optional.
+Sentinel computes a reputation score for each agent wallet based on its on-chain history and policy compliance. That score maps to a spend tier with enforced daily limits. Transactions that exceed the limit are blocked and sent to Telegram for human approval. Everything is enforced cryptographically by the OWS policy engine — not advisory, not optional.
 
 A public API lets anyone query any wallet's reputation for $0.01 via x402. No setup, no cloning, just an HTTP call.
+
+---
+
+## Quick Start
+
+```bash
+npm install ows-sentinel-sdk
+npx ows-sentinel init
+```
+
+That's it. The CLI automatically:
+- Creates an OWS wallet (or uses existing)
+- Installs the Sentinel policy + dependencies
+- Registers the policy with OWS
+- Creates an API key with the policy attached
+- Signs an auth message with your wallet (no shared secrets)
+
+Then in your agent:
+
+```typescript
+import { signWithApproval } from "ows-sentinel-sdk"
+import { signTransaction } from "@open-wallet-standard/core"
+
+const tx = await signWithApproval(
+  () => signTransaction("my-wallet", "eip155:84532", txHex, "ows_key_..."),
+  { inboxUrl: "https://sentinel-server.saurabh10102.workers.dev" }
+)
+```
 
 ---
 
@@ -23,45 +51,49 @@ A public API lets anyone query any wallet's reputation for $0.01 via x402. No se
 ### End-to-End Flow
 
 ```
-Agent calls sign(walletId, chain, txHex)
+Agent calls sign(walletId, chain, txHex) with API key
         |
         v
   OWS Policy Engine runs reputation-policy.ts
         |
         v
+  Policy resolves wallet UUID → EVM address
+  Policy parses raw tx hex → extracts to, value
+  Policy converts value to USD (live ETH price + stablecoin detection)
   Policy fetches score from Sentinel server
         |
-        +---> Score too low for tx amount? --> DENY (spend limit)
-        |
-        +---> Tx > $1,000 and tier < Verified? --> Queue for human approval
-        |                                              |
-        |                                              v
-        |                                        Telegram notification
-        |                                        with Approve/Reject buttons
-        |                                              |
-        |                                    Human taps Approve
-        |                                              |
-        |                                        HMAC token issued
-        |                                              |
-        |                                    Agent SDK retries sign()
-        |                                    with approval token
+        +---> Over daily spend limit? ──────────┐
+        |                                        |
+        +---> Tx > $1,000 and tier < Verified? ──┤
+        |                                        v
+        |                              Queue for human approval
+        |                              Telegram notification with
+        |                              Approve / Reject buttons
+        |                                        |
+        |                              Human taps Approve
+        |                                        |
+        |                              Approval stored server-side
+        |                                        |
+        |                              Agent SDK retries sign()
+        |                              Policy sees approval → ALLOW
         |
         +---> Within limits? --> ALLOW --> Transaction signed
 ```
 
-### The Deny-Queue-Retry Pattern
+### Authentication
 
-OWS policies have a 5-second timeout. Sentinel needs to do async work (risk scoring, human approval) that can take much longer. The pattern:
+No shared secrets. The CLI signs `"sentinel:{address}"` with your wallet's private key during setup. The signature is stored locally and sent as `X-Wallet-Sig` header on every policy → server call. The server recovers the address from the signature and verifies it matches.
 
-1. **Deny instantly** — policy returns DENY with a queue ID
-2. **Do work async** — Sentinel scans the address, sends Telegram notification
-3. **Human decides** — taps Approve or Reject on Telegram
-4. **Retry with proof** — agent SDK retries with an HMAC approval token
-5. **Verify locally** — policy verifies the HMAC token (no network, fits 5s)
+### Token Support
+
+The policy handles both native ETH and ERC-20 tokens:
+
+- **ETH** — live price from CoinGecko
+- **USDC / USDT / DAI** — recognized as stablecoins ($1 per token)
+- **Unknown tokens** — treated as $0 (passes through)
+- **ERC-20 `transfer()`** — calldata decoded to extract real recipient + amount
 
 ### Reputation Scoring
-
-Score computed from the agent's own on-chain history:
 
 ```
 +1  per clean transaction executed (capped at +50)
@@ -69,8 +101,6 @@ Score computed from the agent's own on-chain history:
 -20 per policy denial (last 30 days)
 -50 per interaction with flagged counterparty
 ```
-
-Score maps to spend tiers:
 
 | Score | Tier | Daily Limit |
 |-------|------|-------------|
@@ -81,12 +111,12 @@ Score maps to spend tiers:
 
 ### Data Sources
 
-| Data | Source | Why |
-|------|--------|-----|
-| Tx count, first seen, active days | [Allium](https://allium.so) Developer API | On-chain history is authoritative |
-| Today's spend | Sentinel KV (self-tracked) | Real-time, no external sync needed |
-| Policy denial count | Sentinel KV (self-tracked) | OWS audit log isn't queryable via API |
-| Flagged counterparties | [GoPlus](https://gopluslabs.io) Security API | Checks 11 risk dimensions per address |
+| Data | Source |
+|------|--------|
+| Tx count, first seen, active days | [Allium](https://allium.so) Developer API |
+| Today's spend + denial count | Sentinel KV (self-tracked) |
+| Flagged counterparties | [GoPlus](https://gopluslabs.io) Security API |
+| ETH price | CoinGecko (live, 2s timeout, $3000 fallback) |
 
 ---
 
@@ -98,7 +128,7 @@ Score maps to spend tiers:
                         | (OWS SDK)       |
                         +--------+--------+
                                  |
-                                 | sign()
+                                 | sign() with API key
                                  v
                         +------------------+
                         | OWS Policy Engine|
@@ -107,6 +137,7 @@ Score maps to spend tiers:
                         |   policy.ts      |
                         +--------+---------+
                                  |
+                          Wallet sig auth
                           GET /reputation
                           POST /queue
                           POST /audit
@@ -115,219 +146,80 @@ Score maps to spend tiers:
 +----------------------------------------------------------------+
 |              Sentinel Server (Cloudflare Worker)               |
 |                                                                |
-|  /reputation/:wallet  — score + tier + daily spend             |
+|  /reputation/:wallet  — score + tier + approval check          |
 |  /audit               — policy reports allow/deny events       |
-|  /queue               — holds high-value txs for approval      |
-|  /status/:id          — agent polls for approval result        |
-|  /approve/:id         — issues HMAC token on human approval    |
-|  /reject/:id          — marks tx as rejected                   |
+|  /queue               — queues denied txs for approval         |
+|  /status/:id          — agent SDK polls for approval           |
+|  /approve/:id         — Telegram bot approves                  |
+|  /reject/:id          — Telegram bot rejects                   |
 |  /scan/:address       — public x402-gated reputation API       |
-|                                                                |
-|  KV: reputation:{wallet}, audit:{wallet},                      |
-|      spend:{wallet}:{date}, pending:{id}                       |
-+----------+-----------------------------+----------------------+
++----------+-----------------------------+-----------------------+
            |                             |
      Service Binding              Allium + GoPlus
-           |                             |
-           v                             v
-+--------------------+         +-------------------+
-| Telegram Bot       |         | Reputation Engine |
-| (Cloudflare Worker)|         |                   |
-|                    |         | Allium: tx history |
-| /webhook  — TG     |         | GoPlus: risk flags|
-|   button callbacks |         | KV: denials/spend |
-| /notify   — sends  |         | Scoring: 0–100+  |
-|   approval requests|         +-------------------+
-| /alert    — sends  |
-|   spend limit msgs |
+           |                      + CoinGecko
+           v
++--------------------+
+| Telegram Bot       |
+| (Cloudflare Worker)|
+|                    |
+| /webhook  — button |
+|   callbacks        |
+| /notify   — sends  |
+|   approval requests|
 +--------------------+
 ```
 
 ### Worker-to-Worker Communication
 
-Both workers run on Cloudflare. They communicate via [Service Bindings](https://developers.cloudflare.com/workers/runtime-apis/bindings/service-bindings/) — direct worker-to-worker calls that bypass the public internet. This avoids the Cloudflare restriction where workers on the same account can't call each other via public URLs.
-
-- **Server → Bot**: service binding `TELEGRAM_BOT` for sending notifications
-- **Bot → Server**: service binding `SENTINEL_SERVER` for approve/reject callbacks
-
----
-
-## Quick Start
-
-### For External Users (No Setup)
-
-**Query any wallet's reputation:**
-
-```bash
-curl https://sentinel-server.saurabh10102.workers.dev/scan/0xWalletAddress
-# Returns 402 — pay $0.01 via x402 to get the full report
-```
-
-**Integrate with your OWS agent:**
-
-```bash
-npm install ows-sentinel-sdk
-npx ows-sentinel init    # copies policy to ~/.ows/policies/
-```
-
-```typescript
-import { signWithApproval } from "ows-sentinel-sdk"
-
-// Wraps sign() with automatic retry on approval
-const result = await signWithApproval(
-  () => ows.signAndSend(request),
-  { inboxUrl: "https://sentinel-server.saurabh10102.workers.dev" }
-)
-```
-
-The SDK handles the deny-queue-retry pattern automatically:
-1. Calls `sign()` — gets denied with a queue ID
-2. Polls `/status/:id` every 3 seconds
-3. When human approves via Telegram, retries with the HMAC token
-4. Transaction goes through
-
-### For Developers (Self-Hosting)
-
-```bash
-git clone <repo>
-cd ows-sentinel
-pnpm install
-
-# Configure local environment
-cp packages/server/.dev.vars.example packages/server/.dev.vars
-cp packages/telegram-bot/.dev.vars.example packages/telegram-bot/.dev.vars
-# Fill in your API keys (see Environment Variables section below)
-
-# Start both workers locally
-pnpm dev:server   # http://localhost:8787
-pnpm dev:bot      # http://localhost:8788
-
-# Typecheck all packages
-pnpm typecheck
-```
-
----
-
-## API Reference
-
-All internal routes require `X-Sentinel-Key` header. The `/scan` route is public (x402-gated). `/health` is public.
-
-### `GET /health`
-Returns `{"status": "ok", "service": "sentinel"}`.
-
-### `GET /reputation/:wallet`
-Returns the wallet's reputation score, tier, daily spend, and breakdown.
-
-```json
-{
-  "wallet": "0xabc...",
-  "score": 74,
-  "tier": "trusted",
-  "spend_limit": 500,
-  "today_spent": 12.4,
-  "breakdown": {
-    "tx_count": 87,
-    "active_days": 14,
-    "policy_denials_30d": 1,
-    "flagged_counterparties": 0
-  },
-  "computed_at": "2026-04-03T10:00:00Z"
-}
-```
-
-Results are cached in KV for 60 seconds.
-
-### `POST /audit`
-Policy reports allow/deny events. Updates daily spend tracking on allow.
-
-```json
-{
-  "wallet_id": "0xabc...",
-  "action": "allow",
-  "reason": "within_limit",
-  "tx_value": "2.5",
-  "chain_id": "eip155:8453"
-}
-```
-
-### `POST /queue`
-Queues a high-value transaction for human approval. Triggers Telegram notification.
-
-```json
-{
-  "wallet_id": "0xabc...",
-  "value": "1500",
-  "chain_id": "eip155:8453",
-  "raw_hex": "0x...",
-  "reason": "high_value",
-  "tier": "established",
-  "score": 34
-}
-```
-
-Returns `{"id": "uuid", "status": "pending"}`.
-
-### `GET /status/:id`
-Agent SDK polls this. Returns `{"status": "pending"}`, `{"status": "approved", "token": "..."}`, or `{"status": "rejected"}`.
-
-### `POST /approve/:id`
-Called by Telegram bot on human approval. Issues an HMAC token valid for 10 minutes.
-
-### `POST /reject/:id`
-Called by Telegram bot on human rejection.
-
-### `GET /scan/:address` (x402-gated)
-Public API. Returns 402 Payment Required without payment. With x402 payment ($0.01 USDC on Base Sepolia), returns the full reputation report.
+Both workers communicate via [Service Bindings](https://developers.cloudflare.com/workers/runtime-apis/bindings/service-bindings/) — direct worker-to-worker calls that bypass the public internet.
 
 ---
 
 ## Telegram Notifications
 
-### High-Value Approval Request
-Fires when a transaction exceeds $1,000 and the wallet tier is below Verified.
+Every denied transaction triggers a Telegram notification with full details and Approve/Reject buttons:
 
 ```
-High-Value Transaction — Approval Needed
+🚨 Transaction Blocked — Approval Needed
 
-Agent      agent-treasury
-Tier       Established
-Amount     $1500 on Base
-Score      34/100
+From     0x06daef11d5944c1ec3c22a618dbc61c25c433682
+To       0x95ad61b0a150d79219dcf64e1e6cc01f0b64c4ce
+Amount   $10.29 on Base
+Tier     New
+Score    0/100
 
-This exceeds auto-approval threshold for this tier.
+Reason: Spend limit exceeded for this tier
 
-[Approve]  [Reject]
+Status: ⏳ Pending
+
+[✅ Approve]  [❌ Reject]
 ```
 
-Tapping Approve updates the message to show "APPROVED" and issues the HMAC token. Tapping Reject marks the transaction as rejected.
-
-### Spend Limit Alert
-Fires when a transaction is denied due to daily spend limit.
-
-```
-Spend Limit Reached
-
-Agent      agent-treasury
-Tier       Established ($50/day)
-Spent      $48.20 today
-Attempted  $5.00 more — DENIED
-
-Score: 34/100
-```
+After tapping Approve, the status line updates to `Status: ✅ Approved` and the agent can retry the transaction.
 
 ---
 
-## Policy Executable
+## API Reference
 
-`packages/policies/src/reputation-policy.ts` runs inside the OWS policy engine on every `sign()` call. It:
+### Public Routes (no auth)
 
-1. Fetches the wallet's score from the Sentinel server (2s timeout)
-2. Checks if `today_spend + tx_value > tier_limit` — denies if over
-3. Checks if `tx_value > $1,000` and tier < Verified — queues for approval
-4. Reports the result back to `/audit` (fire-and-forget)
-5. Returns `{allow: true}` or `{allow: false, reason: "..."}` to OWS
+| Route | Method | Purpose |
+|-------|--------|---------|
+| `/health` | GET | Health check |
+| `/status/:id` | GET | Agent SDK polls approval status |
+| `/approve/:id` | POST | Telegram bot approves (via service binding) |
+| `/reject/:id` | POST | Telegram bot rejects (via service binding) |
+| `/scan/:address` | GET | x402-gated public reputation API ($0.01) |
 
-Requires environment variables: `SENTINEL_URL`, `SENTINEL_KEY`.
+### Wallet-Authenticated Routes
+
+Require `X-Wallet-Sig` and `X-Wallet-Address` headers.
+
+| Route | Method | Purpose |
+|-------|--------|---------|
+| `/reputation/:wallet` | GET | Score + tier + spend + approval check |
+| `/audit` | POST | Policy reports allow/deny events |
+| `/queue` | POST | Queue denied tx for Telegram approval |
 
 ---
 
@@ -335,111 +227,86 @@ Requires environment variables: `SENTINEL_URL`, `SENTINEL_KEY`.
 
 ```
 ows-sentinel/
-├── package.json                 # pnpm workspace root
-├── pnpm-workspace.yaml
-├── tsconfig.base.json           # shared TypeScript config
 ├── packages/
 │   ├── server/                  # Cloudflare Worker — main API
 │   │   ├── src/
-│   │   │   ├── index.ts         # Hono app, route wiring, auth + x402 middleware
+│   │   │   ├── index.ts         # Hono app, routing, wallet sig auth, x402
 │   │   │   ├── types.ts         # Bindings, ReputationScore, AuditEvent, PendingTx
 │   │   │   ├── engine/
 │   │   │   │   ├── scoring.ts   # computeScore(), getTier(), getTierLimit()
 │   │   │   │   ├── allium.ts    # fetchWalletHistory() — Allium API client
 │   │   │   │   └── goplus.ts    # checkAddresses() — GoPlus API client
 │   │   │   ├── lib/
-│   │   │   │   └── hmac.ts      # createApprovalToken(), verifyApprovalToken()
+│   │   │   │   ├── hmac.ts      # HMAC token utilities
+│   │   │   │   └── validate.ts  # ETH address validation
 │   │   │   └── routes/
 │   │   │       ├── reputation.ts
 │   │   │       ├── audit.ts
 │   │   │       ├── queue.ts
 │   │   │       └── scan.ts
-│   │   ├── wrangler.toml        # KV namespace + service binding config
-│   │   └── .dev.vars.example
+│   │   └── wrangler.toml
 │   ├── telegram-bot/            # Cloudflare Worker — Telegram webhook
 │   │   ├── src/
-│   │   │   ├── index.ts         # Hono app with /webhook, /notify, /alert routes
-│   │   │   ├── bot.ts           # grammy bot setup, callback handlers
-│   │   │   └── messages.ts      # message templates
-│   │   ├── wrangler.toml        # service binding to sentinel-server
-│   │   └── .dev.vars.example
-│   ├── policies/                # OWS policy executable
+│   │   │   ├── index.ts         # Webhook handler, /notify endpoint
+│   │   │   └── messages.ts      # Message templates
+│   │   └── wrangler.toml
+│   ├── policies/                # Policy source (bundled in SDK)
 │   │   └── src/
 │   │       └── reputation-policy.ts
-│   └── sdk/                     # npm package for agent developers
-│       └── src/
-│           ├── index.ts         # signWithApproval()
-│           └── cli.ts           # npx ows-sentinel init
+│   └── sdk/                     # npm: ows-sentinel-sdk
+│       ├── src/
+│       │   ├── index.ts         # signWithApproval()
+│       │   └── cli.ts           # npx ows-sentinel init
+│       └── policy/
+│           └── reputation-policy.ts  # bundled for npm
+├── package.json
+├── pnpm-workspace.yaml
+└── tsconfig.base.json
 ```
 
 ---
 
-## Environment Variables
+## Development
 
-### Server (`packages/server/.dev.vars`)
+```bash
+git clone https://github.com/starc007/ows-sentinel
+cd ows-sentinel
+pnpm install
 
-| Variable | Description |
-|----------|-------------|
-| `SENTINEL_SECRET` | HMAC signing secret for approval tokens |
-| `ALLIUM_API_KEY` | Allium Developer API key ([get one free](https://app.allium.so/join)) |
-| `SENTINEL_KEY` | Internal API key shared between server and bot |
-| `X402_RECEIVE_ADDRESS` | Wallet address to receive x402 micropayments |
+# Start sentinel server (port 8787)
+pnpm dev:server
 
-### Telegram Bot (`packages/telegram-bot/.dev.vars`)
+# Start telegram bot (port 8788)
+pnpm dev:bot
 
-| Variable | Description |
-|----------|-------------|
-| `TELEGRAM_BOT_TOKEN` | Bot token from [@BotFather](https://t.me/botfather) |
-| `SENTINEL_KEY` | Must match the server's SENTINEL_KEY |
-| `TELEGRAM_CHAT_ID` | Your Telegram chat ID for notifications |
+# Typecheck all packages
+pnpm typecheck
+```
 
-### Policy (`packages/policies/.env`)
-
-| Variable | Description |
-|----------|-------------|
-| `SENTINEL_URL` | Sentinel server URL |
-| `SENTINEL_KEY` | Must match the server's SENTINEL_KEY |
+Copy `.dev.vars.example` to `.dev.vars` in `packages/server/` and `packages/telegram-bot/`.
 
 ---
 
 ## Deployment
 
-### Deploy Workers
-
 ```bash
-pnpm run deploy:server    # deploys sentinel-server to Cloudflare
-pnpm run deploy:bot       # deploys sentinel-telegram-bot to Cloudflare
-```
+# Deploy workers
+pnpm run deploy:server
+pnpm run deploy:bot
 
-### Set Production Secrets
-
-```bash
-# Server secrets
+# Set production secrets (server)
 cd packages/server
 npx wrangler secret put SENTINEL_SECRET
 npx wrangler secret put ALLIUM_API_KEY
-npx wrangler secret put SENTINEL_KEY
 npx wrangler secret put X402_RECEIVE_ADDRESS
 
-# Bot secrets
+# Set production secrets (bot)
 cd ../telegram-bot
 npx wrangler secret put TELEGRAM_BOT_TOKEN
-npx wrangler secret put SENTINEL_KEY        # same value as server
 npx wrangler secret put TELEGRAM_CHAT_ID
-```
 
-### Register Telegram Webhook
-
-```bash
-curl "https://api.telegram.org/bot<YOUR_BOT_TOKEN>/setWebhook?url=https://<your-bot>.workers.dev/webhook"
-```
-
-### Create KV Namespace
-
-```bash
-cd packages/server
-npx wrangler kv namespace create KV
-# Update the ID in wrangler.toml
+# Register Telegram webhook
+curl "https://api.telegram.org/bot<TOKEN>/setWebhook?url=https://<bot>.workers.dev/webhook"
 ```
 
 ---
@@ -452,9 +319,12 @@ npx wrangler kv namespace create KV
 | Bot | Cloudflare Workers + grammy |
 | On-chain data | Allium Developer API (Base chain) |
 | Address risk | GoPlus Security API (11 risk dimensions) |
+| ETH pricing | CoinGecko API (live) |
+| Token parsing | ethers.js (ERC-20 transfer decoding) |
 | Micropayments | x402 protocol (USDC on Base) |
 | Policy | TypeScript via tsx (runs in OWS) |
-| SDK | TypeScript npm package |
+| Auth | Wallet signature (EIP-191) |
+| SDK | [ows-sentinel-sdk](https://www.npmjs.com/package/ows-sentinel-sdk) on npm |
 | Monorepo | pnpm workspaces |
 
 ---
@@ -463,3 +333,4 @@ npx wrangler kv namespace create KV
 
 - **Server**: https://sentinel-server.saurabh10102.workers.dev
 - **Bot**: https://sentinel-telegram-bot.saurabh10102.workers.dev
+- **SDK**: https://www.npmjs.com/package/ows-sentinel-sdk
