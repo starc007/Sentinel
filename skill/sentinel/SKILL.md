@@ -27,10 +27,10 @@ Agent signs tx → OWS policy checks reputation → Under limit? Sign.
 
 | Score | Tier | Daily Limit |
 |-------|------|-------------|
-| 0–20 | New | $5/day |
-| 21–50 | Established | $50/day |
-| 51–100 | Trusted | $500/day |
-| 100+ | Verified | $5,000/day |
+| 0–14 | New | $5/day |
+| 15–39 | Established | $50/day |
+| 40–74 | Trusted | $500/day |
+| 75+ | Verified | $5,000/day |
 
 Score is computed from on-chain history (Allium), address risk (GoPlus), and self-tracked policy events.
 
@@ -91,6 +91,7 @@ The policy handles both ETH and ERC-20 tokens:
 - **ETH** — live price from CoinGecko
 - **USDC / USDT / DAI** — recognized as stablecoins ($1 per token)
 - **Other ERC-20** — `transfer()` calldata decoded, treated as $0 if can't be priced
+- **Dangerous calls blocked** — `approve()`, `increaseAllowance()`, `setApprovalForAll()`, `permit()` are always denied and routed to Telegram for approval. Prevents rogue agents from granting token allowances.
 
 ### Supported Chains
 

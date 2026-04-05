@@ -91,6 +91,7 @@ The policy handles both native ETH and ERC-20 tokens:
 - **ETH** — live price from CoinGecko
 - **USDC / USDT / DAI** — recognized as stablecoins ($1 per token)
 - **Unknown tokens** — treated as $0 (passes through)
+- **Dangerous calls blocked** — `approve()`, `increaseAllowance()`, `setApprovalForAll()`, `permit()` are always denied and queued for Telegram approval, regardless of value. Prevents rogue agents from granting token allowances.
 - **ERC-20 `transfer()`** — calldata decoded to extract real recipient + amount
 
 ### Reputation Scoring
@@ -104,10 +105,10 @@ The policy handles both native ETH and ERC-20 tokens:
 
 | Score | Tier | Daily Limit |
 |-------|------|-------------|
-| 0–20 | New | $5/day |
-| 21–50 | Established | $50/day |
-| 51–100 | Trusted | $500/day |
-| 100+ | Verified | $5,000/day |
+| 0–14 | New | $5/day |
+| 15–39 | Established | $50/day |
+| 40–74 | Trusted | $500/day |
+| 75+ | Verified | $5,000/day |
 
 ### Data Sources
 

@@ -36,16 +36,17 @@ The SDK handles the full flow:
 
 | Score | Tier | Daily Limit |
 |-------|------|-------------|
-| 0–20 | New | $5/day |
-| 21–50 | Established | $50/day |
-| 51–100 | Trusted | $500/day |
-| 100+ | Verified | $5,000/day |
+| 0–14 | New | $5/day |
+| 15–39 | Established | $50/day |
+| 40–74 | Trusted | $500/day |
+| 75+ | Verified | $5,000/day |
 
 ## Token Support
 
 - **ETH** — live price from CoinGecko
 - **USDC / USDT / DAI** — recognized as stablecoins
 - **ERC-20 transfers** — calldata decoded automatically
+- **Dangerous calls blocked** — `approve()`, `increaseAllowance()`, `setApprovalForAll()` always need Telegram approval
 
 ## Links
 
