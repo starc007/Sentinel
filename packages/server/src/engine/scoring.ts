@@ -17,9 +17,9 @@ export function computeScore(inputs: ScoreInputs): number {
 export type Tier = "new" | "established" | "trusted" | "verified";
 
 export function getTier(score: number): Tier {
-  if (score > 100) return "verified";
-  if (score > 50) return "trusted";
-  if (score > 20) return "established";
+  if (score >= 75) return "verified";   // max is 80 — needs near-perfect history
+  if (score >= 40) return "trusted";
+  if (score >= 15) return "established";
   return "new";
 }
 

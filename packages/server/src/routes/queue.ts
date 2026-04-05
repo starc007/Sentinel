@@ -5,12 +5,26 @@ import { isValidAddress } from "../lib/validate";
 const queue = new Hono<{ Bindings: Bindings }>();
 const publicRoutes = new Hono<{ Bindings: Bindings }>();
 
-// Register wallet → Telegram chat ID mapping
-publicRoutes.post("/register", async (c) => {
-  const body = await c.req.json<{ wallet: string; chat_id: string }>();
-  if (!body.wallet || !body.chat_id) return c.json({ error: "wallet and chat_id required" }, 400);
-  await c.env.KV.put(`chat:${body.wallet.toLowerCase()}`, body.chat_id);
-  return c.json({ ok: true, wallet: body.wallet.toLowerCase() });
+// Step 1: CLI creates a link code (authed — requires wallet sig)
+queue.post("/create-link", async (c) => {
+  const body = await c.req.json<{ wallet: string }>();
+  if (!body.wallet) return c.json({ error: "wallet required" }, 400);
+  const code = crypto.randomUUID().slice(0, 8);
+  await c.env.KV.put(`link:${code}`, body.wallet.toLowerCase(), { expirationTtl: 300 });
+  return c.json({ code });
+});
+
+// Step 2: Bot calls this with the code + chat_id (via service binding)
+publicRoutes.post("/complete-link", async (c) => {
+  const body = await c.req.json<{ code: string; chat_id: string }>();
+  if (!body.code || !body.chat_id) return c.json({ error: "code and chat_id required" }, 400);
+
+  const wallet = await c.env.KV.get(`link:${body.code}`);
+  if (!wallet) return c.json({ error: "invalid or expired link code" }, 400);
+
+  await c.env.KV.put(`chat:${wallet}`, body.chat_id);
+  await c.env.KV.delete(`link:${body.code}`);
+  return c.json({ ok: true, wallet });
 });
 
 // Check if wallet has a linked Telegram chat

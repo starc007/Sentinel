@@ -26,30 +26,38 @@ app.post("/webhook", async (c) => {
 
   const bot = new Bot(c.env.TELEGRAM_BOT_TOKEN);
 
-  // Handle /start {wallet_address} — registers chat ID for this wallet
+  // Handle /start {link_code} — completes wallet→chat linking
   if (update.message?.text?.startsWith("/start")) {
     const chatId = update.message.chat.id;
     const parts = update.message.text.split(" ");
-    const wallet = parts[1]?.toLowerCase();
+    const code = parts[1]?.trim();
 
-    if (wallet && wallet.startsWith("0x") && wallet.length === 42) {
-      // Register wallet → chat_id on the server
+    if (code && code.length > 0) {
       try {
-        await c.env.SENTINEL_SERVER.fetch("https://sentinel-server/register", {
+        const res = await c.env.SENTINEL_SERVER.fetch("https://sentinel-server/complete-link", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ wallet, chat_id: String(chatId) }),
+          body: JSON.stringify({ code, chat_id: String(chatId) }),
         });
-        await bot.api.sendMessage(chatId,
-          `✅ Sentinel active!\n\nWallet <code>${wallet}</code> linked.\nYou'll receive notifications when transactions need approval.`,
-          { parse_mode: "HTML" }
-        );
+        const result = (await res.json()) as { ok?: boolean; wallet?: string; error?: string };
+
+        if (result.ok) {
+          await bot.api.sendMessage(chatId,
+            `✅ Sentinel active!\n\nWallet <code>${result.wallet}</code> linked.\nYou'll receive notifications when transactions need approval.`,
+            { parse_mode: "HTML" }
+          );
+        } else {
+          await bot.api.sendMessage(chatId,
+            `❌ ${result.error ?? "Link failed"}. Run <code>npx ows-sentinel-sdk init</code> to get a new link.`,
+            { parse_mode: "HTML" }
+          );
+        }
       } catch {
-        await bot.api.sendMessage(chatId, "Failed to register wallet. Please try again.");
+        await bot.api.sendMessage(chatId, "Failed to link wallet. Please try again.");
       }
     } else {
       await bot.api.sendMessage(chatId,
-        `👋 Welcome to Sentinel!\n\nTo link your wallet, send:\n<code>/start 0xYourWalletAddress</code>`,
+        `👋 Welcome to Sentinel!\n\nTo link your wallet, run:\n<code>npx ows-sentinel-sdk init</code>\n\nIt will give you a link to connect.`,
         { parse_mode: "HTML" }
       );
     }

@@ -247,15 +247,36 @@ async function init() {
   if (telegramLinked) {
     log("  [7/7] Telegram already linked!\n");
   } else {
-    const botDeepLink = `https://t.me/${BOT_USERNAME}?start=${walletAddress}`;
+    // Create a one-time link code (authed endpoint)
+    let linkCode: string;
+    try {
+      const res = await fetch(`${SENTINEL_SERVER_URL}/create-link`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Wallet-Sig": walletSig,
+          "X-Wallet-Address": walletAddress,
+        },
+        body: JSON.stringify({ wallet: walletAddress }),
+      });
+      const data = (await res.json()) as { code: string };
+      linkCode = data.code;
+    } catch {
+      log("  [7/7] Could not create Telegram link. You can link later.\n");
+      linkCode = "";
+    }
 
-    log("  [7/7] Link Telegram for approval notifications\n");
-    log("  Click this link to connect your wallet to Telegram:\n");
-    log(`  ${botDeepLink}\n`);
-    log(`  (Or open Telegram → @${BOT_USERNAME} → send /start ${walletAddress})\n`);
+    if (linkCode) {
+      const botDeepLink = `https://t.me/${BOT_USERNAME}?start=${linkCode}`;
 
-    if (process.stdin.isTTY) {
-      await prompt("  Press Enter after you've linked...");
+      log("  [7/7] Link Telegram for approval notifications\n");
+      log("  Click this link to connect your wallet to Telegram:\n");
+      log(`  ${botDeepLink}\n`);
+      log(`  (Link expires in 5 minutes)\n`);
+
+      if (process.stdin.isTTY) {
+        await prompt("  Press Enter after you've linked...");
+      }
     }
   }
 

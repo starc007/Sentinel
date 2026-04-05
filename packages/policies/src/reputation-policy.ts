@@ -29,8 +29,20 @@ const TIER_LIMITS: Record<string, number> = {
 
 const HIGH_VALUE_THRESHOLD = 1000;
 
+// Tier thresholds must match server's scoring.ts
+
 // ERC-20 transfer(address,uint256) selector
 const TRANSFER_SELECTOR = "a9059cbb";
+
+// Dangerous selectors — these grant third-party access to wallet assets
+// A rogue agent could call approve(attacker, MAX_UINT) then drain via transferFrom
+const DANGEROUS_SELECTORS: Record<string, string> = {
+  "095ea7b3": "approve(address,uint256)",
+  "39509351": "increaseAllowance(address,uint256)",
+  "a22cb465": "setApprovalForAll(address,bool)",
+  "d505accf": "permit(address,address,uint256,uint256,uint8,bytes32,bytes32)",
+  "2a55205a": "approve(address,uint256)",  // some ERC-721 variants
+};
 
 // Known stablecoins on Base (address → decimals)
 // These are always $1 per token
@@ -59,21 +71,34 @@ async function fetchEthPrice(): Promise<number> {
 
 // Parse raw tx to extract: real recipient, USD value, and whether it's a token transfer
 function parseTx(rawHex: string): {
-  to: string;        // real recipient (contract address for ERC-20, or direct to)
-  realTo: string;     // actual recipient of funds (decoded from transfer() for ERC-20)
-  value: bigint;      // native ETH value in wei
+  to: string;
+  realTo: string;
+  value: bigint;
   isErc20: boolean;
   tokenContract: string;
   tokenAmount: bigint;
   tokenDecimals: number | null;
+  isDangerous: boolean;
+  dangerousFunction: string | null;
 } {
   try {
     const tx = Transaction.from("0x" + rawHex);
     const to = (tx.to ?? "").toLowerCase();
     const data = tx.data ?? "0x";
 
+    const selector = data.length >= 10 ? data.slice(2, 10) : "";
+
+    // Check for dangerous selectors (approve, increaseAllowance, etc.)
+    if (selector && DANGEROUS_SELECTORS[selector]) {
+      return {
+        to, realTo: to, value: tx.value,
+        isErc20: false, tokenContract: to, tokenAmount: 0n, tokenDecimals: null,
+        isDangerous: true, dangerousFunction: DANGEROUS_SELECTORS[selector],
+      };
+    }
+
     // Check if this is an ERC-20 transfer(address,uint256)
-    if (data.length >= 138 && data.slice(2, 10) === TRANSFER_SELECTOR) {
+    if (data.length >= 138 && selector === TRANSFER_SELECTOR) {
       const decoded = AbiCoder.defaultAbiCoder().decode(
         ["address", "uint256"],
         "0x" + data.slice(10)
@@ -83,29 +108,22 @@ function parseTx(rawHex: string): {
       const decimals = STABLECOINS[to] ?? null;
 
       return {
-        to,
-        realTo: recipient,
-        value: tx.value,
-        isErc20: true,
-        tokenContract: to,
-        tokenAmount: amount,
-        tokenDecimals: decimals,
+        to, realTo: recipient, value: tx.value,
+        isErc20: true, tokenContract: to, tokenAmount: amount, tokenDecimals: decimals,
+        isDangerous: false, dangerousFunction: null,
       };
     }
 
     return {
-      to,
-      realTo: to,
-      value: tx.value,
-      isErc20: false,
-      tokenContract: "",
-      tokenAmount: 0n,
-      tokenDecimals: null,
+      to, realTo: to, value: tx.value,
+      isErc20: false, tokenContract: "", tokenAmount: 0n, tokenDecimals: null,
+      isDangerous: false, dangerousFunction: null,
     };
   } catch {
     return {
       to: "", realTo: "", value: 0n,
       isErc20: false, tokenContract: "", tokenAmount: 0n, tokenDecimals: null,
+      isDangerous: false, dangerousFunction: null,
     };
   }
 }
@@ -169,8 +187,36 @@ async function main() {
 
   // Parse the raw transaction
   const parsed = parseTx(ctx.transaction.raw_hex);
-  const to = parsed.realTo; // use the actual fund recipient
+  const to = parsed.realTo;
   const txValueUsd = await txToUsd(parsed);
+
+  // Block dangerous calls (approve, increaseAllowance, etc.) — always queue for approval
+  if (parsed.isDangerous) {
+    const reason = `dangerous_call:${parsed.dangerousFunction} on ${parsed.tokenContract.slice(0, 10)}...`;
+    process.stderr.write(`SENTINEL: BLOCKED ${parsed.dangerousFunction} on ${parsed.tokenContract}\n`);
+
+    try {
+      const res = await fetch(`${sentinelUrl}/queue`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Wallet-Sig": walletSig, "X-Wallet-Address": walletAddress,
+        },
+        body: JSON.stringify({
+          wallet_id: walletAddress, to: parsed.to,
+          value: "0", chain_id: ctx.chain_id,
+          raw_hex: ctx.transaction.raw_hex,
+          reason, tier: "n/a", score: 0,
+        }),
+        signal: AbortSignal.timeout(2000),
+      });
+      const { id } = (await res.json()) as { id: string };
+      output({ allow: false, reason: `queued:${id}:${reason}` });
+    } catch {
+      output({ allow: false, reason });
+    }
+    return;
+  }
 
   // 1. Fetch reputation score
   let rep: {
